@@ -14,11 +14,11 @@
   },
   "http": {
     "enabled": true,
-    "base_url": "https://gpt-api.hkust-gz.edu.cn/v1/chat/completions",
-    "model": "gpt-3.5-turbo",
+    "base_url": "https://api.siliconflow.cn/v1/chat/completions",
+    "model": "Qwen/Qwen3-8B",
     "headers": {
       "Content-Type": "application/json",
-      "Authorization": "8f565b39d2f34f728677e049984707a98296cee4fa754ab4ba3b14f627533aad"
+      "Authorization": "Bearer sk-ygkgaibmqiasjapiiabmowrehdolaridtjyvnrraikwtphbu"
     }
     
   },
@@ -239,7 +239,7 @@
     "base_url": "https://api.siliconflow.cn/v1/chat/completions",
     "model": "Qwen/Qwen3-8B",
     "headers": {
-    "Authorization": "Bearer sk-uzwgvqreimoacsxqeounnpxbdlxkvwcoazsvaheybqqkxayv",
+    "Authorization": "Bearer sk-ygkgaibmqiasjapiiabmowrehdolaridtjyvnrraikwtphbu",
     "Content-Type": "application/json"
 }
   },
