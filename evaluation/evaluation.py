@@ -444,6 +444,49 @@ def _pick_full_step_path(op_orient_group_dir: str, expected_indices: List[int]) 
             return p
     return None
 
+def _append_csv(path: str, rows: List[dict]):
+    if not rows:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    df = pd.DataFrame(rows)
+
+    # ---- 强制补齐 + 强转 int（你最关心的几列）----
+    int_cols = ["exec_ok_single","exec_ok_full",
+                "metric_ok_single","metric_ok_full",
+                "pred_single_exists","pred_full_exists"]
+    for c in int_cols:
+        if c not in df.columns:
+            df[c] = 0
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+
+    header = not os.path.exists(path)
+
+    if header:
+        # 第一次写：就按 df 当前列写 header
+        df.to_csv(path, mode="w", header=True, index=False)
+        return
+
+    # 之后追加：必须按已有文件 header 的列顺序写
+    with open(path, "r", encoding="utf-8") as f:
+        first_line = f.readline().strip()
+    old_cols = first_line.split(",")
+
+    # 如果 df 出现了新列：最稳的是“重写全文件”（否则追加会丢列）
+    new_cols = [c for c in df.columns if c not in old_cols]
+    if new_cols:
+        old = pd.read_csv(path, low_memory=False)
+        all_cols = old_cols + new_cols
+        old = old.reindex(columns=all_cols)
+        df  = df.reindex(columns=all_cols)
+        out = pd.concat([old, df], ignore_index=True)
+        _write_csv_atomic(out, path)   # 你已经有这个原子写
+        return
+
+    # 正常追加：只对齐已有列顺序
+    df = df.reindex(columns=old_cols)
+    df.to_csv(path, mode="a", header=False, index=False)
+
 
 def _numbers_in_folder_suffix(folder_name: str, step_prefix: str) -> List[int]:
     """
@@ -1175,19 +1218,7 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
         few_shot = None
         print(f"[ONESHOT] build few-shot failed for {pid}: {e}")
 
-    # prompt = build_incremental_cq_prompt(
-    #     previous_code=prev_code,
-    #     operation_instruction=r["prompt_text"],
-    #     link_mode=None,
-    #     images=None,
-    #     image_prompt=None,
-    #     next_var_name="result",
-    #     allow_comments=False,
-    #     add_size_guidelines=True,
-    #     op_kind=op_kind,
-    #     few_shots=few_shot,              # <<< NEW
-    # )
-    prompt = build_incremental_cq_prompt_infer(
+    prompt = build_incremental_cq_prompt(
         previous_code=prev_code,
         operation_instruction=r["prompt_text"],
         link_mode=None,
@@ -1199,6 +1230,18 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
         op_kind=op_kind,
         few_shots=few_shot,              # <<< NEW
     )
+    # prompt = build_incremental_cq_prompt_infer(
+    #     previous_code=prev_code,
+    #     operation_instruction=r["prompt_text"],
+    #     link_mode=None,
+    #     images=None,
+    #     image_prompt=None,
+    #     next_var_name="result",
+    #     allow_comments=False,
+    #     add_size_guidelines=True,
+    #     op_kind=op_kind,
+    #     few_shots=few_shot,              # <<< NEW
+    # )
 
     # print(prompt)
     # print(f"[INFO] Prompt for {pid} length (chars): {len(prompt)}") # 打印长度
@@ -1682,43 +1725,42 @@ def main_parallel():
 
     # RESUME：从 summary.csv 读取已完成样本
 # 结果缓冲区 (!!! 提前初始化 !!!)
-    all_cand_rows = []
-    all_summary_rows = []
+    # all_cand_rows = []
+    # all_summary_rows = []
 
     # RESUME：从 summary.csv 读取已完成样本
     done_group_indexs = set()
+
     if RESUME and WRITE_SUMMARY and os.path.exists(summary_out_path):
-        print(f"[RESUME] Loading existing {summary_out_path} for resume and appending...")
+        print(f"[RESUME] Loading existing {summary_out_path} for resume-skip...")
         try:
             old_summary_df = pd.read_csv(summary_out_path)
             if {"group_index", "k_index"}.issubset(old_summary_df.columns):
-                # 1. Populate done_group_indexs for skipping
-                mask = old_summary_df["k_index"].isin(["summary", "summary_best"])
+                mask = old_summary_df["k_index"].astype(str).isin(["summary", "summary_best"])
                 done_group_indexs = set(old_summary_df.loc[mask, "group_index"].astype(str))
-                
-                # 2. Load existing data for appending
-                all_summary_rows = old_summary_df.to_dict(orient="records") # <-- 装载旧数据
-                print(f"[RESUME] Loaded {len(all_summary_rows)} summary rows. Found {len(done_group_indexs)} completed tasks.")
+                print(f"[RESUME] Found {len(done_group_indexs)} completed tasks in summary.csv")
+            else:
+                print(f"[WARN] summary.csv missing columns: need group_index,k_index. Will not resume-skip.")
         except Exception as e:
             print(f"[WARN] Failed to load {summary_out_path}, will start fresh. Error: {e}")
     # 基于 summary 的完成列表，加载 cands.csv
-    if RESUME and os.path.exists(cand_out_path):
-        print(f"[RESUME] Loading existing {cand_out_path} for appending...")
-        try:
-            old_cands_df = pd.read_csv(cand_out_path)
+    # if RESUME and os.path.exists(cand_out_path):
+    #     print(f"[RESUME] Loading existing {cand_out_path} for appending...")
+    #     try:
+    #         old_cands_df = pd.read_csv(cand_out_path)
             
-            if not old_cands_df.empty and not done_group_indexs:
-                    print(f"[WARN] {cand_out_path} exists, but no completed tasks found in summary. Will overwrite cands.csv.")
-            elif not old_cands_df.empty:
-                old_cands_df["group_index"] = old_cands_df["group_index"].astype(str)
+    #         if not old_cands_df.empty and not done_group_indexs:
+    #                 print(f"[WARN] {cand_out_path} exists, but no completed tasks found in summary. Will overwrite cands.csv.")
+    #         elif not old_cands_df.empty:
+    #             old_cands_df["group_index"] = old_cands_df["group_index"].astype(str)
                 
-                # 关键：只保留那些 "已完成" 任务的 cands
-                # 这样，"未完成" (pending) 的任务被重新运行后，旧的 cand (if any) 会被丢弃
-                cands_to_keep = old_cands_df[old_cands_df["group_index"].isin(done_group_indexs)]
-                all_cand_rows = cands_to_keep.to_dict(orient="records") # <-- 装载旧数据
-                print(f"[RESUME] Loaded and kept {len(all_cand_rows)} candidate rows from completed tasks.")
-        except Exception as e:
-            print(f"[WARN] Failed to load {cand_out_path}, will start fresh. Error: {e}")
+    #             # 关键：只保留那些 "已完成" 任务的 cands
+    #             # 这样，"未完成" (pending) 的任务被重新运行后，旧的 cand (if any) 会被丢弃
+    #             cands_to_keep = old_cands_df[old_cands_df["group_index"].isin(done_group_indexs)]
+    #             all_cand_rows = cands_to_keep.to_dict(orient="records") # <-- 装载旧数据
+    #             print(f"[RESUME] Loaded and kept {len(all_cand_rows)} candidate rows from completed tasks.")
+    #     except Exception as e:
+    #         print(f"[WARN] Failed to load {cand_out_path}, will start fresh. Error: {e}")
 
     # 过滤掉已完成的样本
     pend_rows = [r for _, r in df.iterrows() if str(r["group_index"]) not in done_group_indexs]
@@ -1744,31 +1786,32 @@ def main_parallel():
                     break
                 except Exception as e:
                     # 记录一条错误summary，不要中断
-                    if WRITE_SUMMARY:                                              # === 新增开关 ===
-                        err_row = {"group_index": "unknown", "k_index": "summary",
-                                   "op_type": "Unknown", "n_total": 0,
-                                   "error": f"worker_loop_exception:{type(e).__name__}:{e}"}
-                        all_summary_rows.append(err_row)
+                    if WRITE_SUMMARY:
+                        err_row = {
+                            "group_index": "unknown",
+                            "k_index": "summary",
+                            "op_type": "Unknown",
+                            "n_total": 0,
+                            "error": f"worker_loop_exception:{type(e).__name__}:{e}"
+                        }
+                        _append_csv(summary_out_path, [err_row])
                     pbar.update(1)
                     continue
 
-                # 正常累加与落盘
-                all_cand_rows.extend(per_cand_rows)
-                if WRITE_SUMMARY:                                                  # === 新增开关 ===
-                    all_summary_rows.extend(summary_rows)
+
+                # 直接追加写盘，不在内存里累积全量
+                _append_csv(cand_out_path, per_cand_rows)
+                if WRITE_SUMMARY:
+                    _append_csv(summary_out_path, summary_rows)
+
                 buffer_count += 1
                 pbar.update(1)
+
                 if buffer_count % WRITE_EVERY == 0:
-                    pd.DataFrame(all_cand_rows).to_csv(cand_out_path, index=False)
-                    if WRITE_SUMMARY:                                              # === 新增开关 ===
-                        pd.DataFrame(all_summary_rows).to_csv(summary_out_path, index=False)
-                    pbar.set_postfix({"saved": len(all_summary_rows)})
+                    # 这里不再重写全表，只做显示
+                    pbar.set_postfix({"appended": buffer_count})
 
 
-    # ---- 最后一批写盘 ----
-    pd.DataFrame(all_cand_rows).to_csv(cand_out_path, index=False)
-    if WRITE_SUMMARY:                                                              # === 新增开关 ===
-        pd.DataFrame(all_summary_rows).to_csv(summary_out_path, index=False)
     print("[done] all results saved.")
 
 if __name__ == "__main__":
