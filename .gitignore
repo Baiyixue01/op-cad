@@ -1,8 +1,9 @@
-/home/baiyixue/project/op-cad/data/gt_edges_json
-data/gt_edges_json
-data/precode
-data/pre_code
-data/pre_code_cop
-inference_results
-inference
+data
+inference*
 test
+zero_vs_one
+train_data
+result*
+others
+__pycache__/
+*.pyc

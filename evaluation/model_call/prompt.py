@@ -18,6 +18,7 @@ def build_incremental_cq_prompt(
     allow_comments: bool = False,
     add_size_guidelines: bool = True,
     op_kind: Optional[str] = None,
+    few_shots: Optional[List[Dict]] = None,
 ) -> str:
     """
     构建“增量式 CadQuery 代码生成”Prompt。
@@ -80,7 +81,7 @@ def build_incremental_cq_prompt(
         linking_note = (
         "### Linking notice\n"
         "- This is the **first modeling step**.\n"
-        "- After building `shape` (if applicable), set `result_0 = shape` in the **#bool** section."
+        "- After building `shape` (if applicable), set `result = shape` in the **#bool** section."
     )
     else:
         linking_note = dedent(f"""
@@ -98,29 +99,42 @@ def build_incremental_cq_prompt(
          - The result assignment **must** follow one of:
            - `{next_var_name} = {cur_var}.union(shape)`
            - `{next_var_name} = {cur_var}.cut(shape)`
-           - `result_0 = shape (This form is ONLY allowed if this is the first step)`
+           - `result = shape (This form is ONLY allowed if this is the first step)`
     """).strip()
 
+    # plane_usage_rules = dedent("""
+    # ### Workplane and Face Selection Rules (MANDATORY)
+    # - **NEVER** use `.faces()` or `.face()` to select faces or workplanes.
+    # - **NEVER** use string shortcuts like `"XY"`, `"XZ"`, or `"YZ"` to define workplanes.
+    # - Always construct workplanes **explicitly** using `Plane` and `Vector`.
+    # Example:
+    # ```python
+    # from cadquery import Plane, Vector
+    # normal_vector = Vector(0.0, 0.0, 1.0)
+    # x_dir = Vector(1.0, 0.0, 0.0)
+    # origin = Vector(0.0, 0.0, 0.0)
+    # custom_plane = Plane(origin=origin, normal=normal_vector, xDir=x_dir)
+    # wp = cq.Workplane(custom_plane)
+    # ```
+    # - Any generated code containing .faces(, .face(, or "XY"/"XZ"/"YZ" strings will be rejected.
+    # """)
+    
     plane_usage_rules = dedent("""
     ### Workplane and Face Selection Rules (MANDATORY)
+    - **Before modeling operation, you must explicitly define a new workplane to ensure geometric consistency.**
     - **NEVER** use `.faces()` or `.face()` to select faces or workplanes.
-    - **NEVER** use string shortcuts like `"XY"`, `"XZ"`, or `"YZ"` to define workplanes.
     - Always construct workplanes **explicitly** using `Plane` and `Vector`.
     Example:
     ```python
     from cadquery import Plane, Vector
-    normal_vector = Vector(0.0, 0.0, 1.0)
-    x_dir = Vector(1.0, 0.0, 0.0)
-    origin = Vector(0.0, 0.0, 0.0)
-    custom_plane = Plane(origin=origin, normal=normal_vector, xDir=x_dir)
-    wp = cq.Workplane(custom_plane)
-    ```
-    - Any generated code containing .faces(, .face(, or "XY"/"XZ"/"YZ" strings will be rejected.
+    wp = cq.Workplane(inPlane=Plane(origin=(0, 0, 0), normal=Vector(0, 0, 1), xDir=Vector(1, 0, 0)))
     """)
 
 
     modify_rules = dedent("""
     ### Edge-Selection and Application Rules (MANDATORY for fillet/chamfer)
+    -Before applying any fillet or chamfer, you MUST reset the workplane coordinate system exactly as follows (no modifications allowed):
+        wp = cq.Workplane(inPlane=Plane(origin=(0, 0, 0), normal=Vector(0, 0, 1), xDir=Vector(1, 0, 0)))
     - **NEVER** chain `.fillet()` or `.chamfer()` directly after an edge selector (e.g., `.edges(...).fillet(...)`).
     - You **MUST** split the operation into two distinct steps using sequential variable names (e.g., `edges_1`, `edges_2`...).
 
@@ -131,21 +145,20 @@ def build_incremental_cq_prompt(
 
     Example:
     ```python
+    wp = cq.Workplane(inPlane=Plane(origin=(0, 0, 0), normal=Vector(0, 0, 1), xDir=Vector(1, 0, 0)))
     # --- Fillet Operation (Following modify_rules) ---
     # Step 1: Select edges from result_0 and assign to edges_1
-    edges_1 = result_0.edges("|Z")
+    edges_1 = result_0.edges(cq.NearestToPointSelector((x,y,z)))
     
     # Step 2: Apply operation on edges_1, to create result_1
-    fillet_radius = 2.0
     result_1 = edges_1.fillet(fillet_radius)
 
     # --- Chamfer Operation (Continuing the sequence) ---
     # Step 1: Select edges from result_1 and assign to edges_2
-    edges_2 = result_1.edges("<Z")
+    edges_2 = result_1.edges(cq.NearestToPointSelector((x,y,z)))
     
     # Step 2: Apply operation on edges_2, to create result_2
-    chamfer_distance = 1.0
-    result_2 = edges_2.chamfer(chamfer_distance)
+    result_2 = edges_2.chamfer(chamfer_distance_1, chamfer_distance_2)
     ```
     """)
 
@@ -153,6 +166,25 @@ def build_incremental_cq_prompt(
 # ---- 组装 Prompt ----
     sections = []
     sections.append("### Role\nYou are an expert CAD modeling assistant specialized in CadQuery.\nGenerate ONLY the incremental CadQuery code needed to perform the requested operation, as a continuation of the provided previous code context.")
+    if few_shots:
+        ex_blocks = []
+        for i, ex in enumerate(few_shots, 1):
+            label = ex.get("label", f"example_{i}")
+            ex_prev = ex.get("prev_code", "").strip()
+            ex_instr = ex.get("instruction", "").strip()
+            ex_ans = (ex.get("answer", "") or "").strip()
+
+            block = [f"#### Example(Do not copy numbers/variable names from examples)"]
+            if ex_prev:
+                block.append("**Previous code**")
+                block.append("```python\n" + ex_prev + "\n```")
+            if ex_instr:
+                block.append("**Instruction**\n" + ex_instr)
+            if ex_ans:
+                block.append("**Output**")
+                block.append("```python\n" + ex_ans + "\n```")
+            ex_blocks.append("\n".join(block))
+        sections.append("\n\n".join(ex_blocks))
     sections.append(f"""### Context (already executed Python code)
 ```python
 {previous_code if previous_code.strip() else '# No previous code — this is the first modeling step.'}
@@ -177,6 +209,7 @@ Perform the following operation **as a continuation** of the existing model:
 ### Output Format (STRICT)
 ```python
 #edges select
+
 {{generated_edges_select_code}}
 #operation
 {{generated_operation_code}}
@@ -198,3 +231,77 @@ Perform the following operation **as a continuation** of the existing model:
 {{generated_bool_code}}
 """).strip())
     return dedent("\n\n".join(sections)).strip()
+
+
+
+
+def build_incremental_cq_prompt_infer(
+    previous_code: str,
+    operation_instruction: str,
+    link_mode: Optional[Literal["inplace", "append_new"]] = None,
+    current_var_name: Optional[str] = None,
+    next_var_name: Optional[str] = None,
+    images: Optional[List[Dict]] = None,
+    image_prompt: Optional[str] = None,
+    allow_comments: bool = False,
+    add_size_guidelines: bool = True,
+    op_kind: Optional[str] = None,
+    few_shots: Optional[List[Dict]] = None,
+) -> str:
+    """
+    构建用于推理阶段（inference）的 Alpaca 风格 Prompt。
+    - 简化结构，去掉硬性规则与多层约束，保持和 SFT 训练一致。
+    - 模型只看到 instruction + input，不出现 Output 或元规则。
+    """
+    import re
+    from textwrap import dedent
+
+    # 检测当前 result 变量名
+    cur_var = current_var_name or re.findall(r"(result_\d+)", previous_code or "")[-1] if previous_code else None
+    next_var_name = next_var_name or (
+        f"result_{int(cur_var.split('_')[-1]) + 1}" if cur_var and cur_var.startswith("result_") else "result_0"
+    )
+
+    # few-shot 样例（若提供）
+    few_shot_block = ""
+    if few_shots:
+        blocks = []
+        for ex in few_shots:
+            ex_prev = ex.get("prev_code", "").strip()
+            ex_instr = ex.get("instruction", "").strip()
+            ex_ans = (ex.get("answer", "") or "").strip()
+            block = dedent(f"""
+            ### Example
+            Instruction:
+            {ex_instr}
+
+            Input:
+            ```python
+            {ex_prev}
+            ```
+            
+            Output:
+            ```python
+            {ex_ans}
+            ```
+            """)
+            blocks.append(block.strip())
+        few_shot_block = "\n\n".join(blocks) + "\n\n"
+
+    # 拼装核心部分（Alpaca结构）
+    prompt = dedent(f"""
+    {few_shot_block}Below is an instruction that describes a CAD modeling operation.
+    Given the previous CadQuery code, generate the next incremental modeling step.
+
+    ### Instruction:
+    {operation_instruction}
+
+    ### Input:
+    ```python
+    {previous_code if previous_code.strip() else '# No previous code — start from scratch.'}
+    ```
+
+    ### Output:
+    """).strip()
+
+    return prompt

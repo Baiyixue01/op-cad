@@ -3,7 +3,18 @@ import os, json, copy
 from typing import Any, Dict
 
 _DEFAULTS: Dict[str, Any] = {
-    "gen": {"mode": "auto", "k": 5, "temperature": 0.7, "timeout_s": 45},
+    "gen": {
+    "mode": "auto",
+    "k": 5,
+    "temperature": 0.7,
+    "timeout_s": 45,
+    "greedy": False,
+    "top_p": 1.0,
+    "top_k": 40,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 2.0,
+    "out_seq_length": 32768
+    },
     "openai": {
         "enabled": True,
         "api_key": "",
@@ -119,9 +130,17 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
         print("[WARN] openai.enabled=True but openai.api_key is empty.")
 
 def _log_config_safe(cfg: Dict[str, Any], path: str) -> None:
-    # 打印关键参数（敏感字段打码）
     print(f"[CONFIG] loaded from: {path}")
-    print(f"[CONFIG] gen: mode={cfg['gen']['mode']} k={cfg['gen']['k']} temp={cfg['gen']['temperature']} timeout={cfg['gen']['timeout_s']}s")
+    g = cfg["gen"]
+    print(
+        "[CONFIG] gen: "
+        f"mode={g.get('mode')} k={g.get('k')} "
+        f"temp={g.get('temperature')} top_p={g.get('top_p')} top_k={g.get('top_k')} "
+        f"rep_pen={g.get('repetition_penalty')} pres_pen={g.get('presence_penalty')} "
+        f"greedy={g.get('greedy')} max_tokens={g.get('out_seq_length')} "
+        f"timeout={g.get('timeout_s')}s"
+    )
+
     if cfg["openai"]["enabled"]:
         print("[CONFIG] openai: enabled=True "
               f"base_url={cfg['openai'].get('base_url')} "
@@ -129,10 +148,13 @@ def _log_config_safe(cfg: Dict[str, Any], path: str) -> None:
               f"api_key={_mask('api_key', cfg['openai'].get('api_key',''))}")
     else:
         print("[CONFIG] openai: enabled=False")
+
     if cfg["http"]["enabled"]:
         auth = cfg["http"].get("headers", {}).get("Authorization", "")
         print("[CONFIG] http: enabled=True "
-              f"endpoint={cfg['http'].get('endpoint')} "
+              f"base_url={cfg['http'].get('base_url') or cfg['http'].get('endpoint')} "
+              f"model={cfg['http'].get('model')} "
               f"auth={_mask('Authorization', auth)}")
     else:
         print("[CONFIG] http: enabled=False")
+

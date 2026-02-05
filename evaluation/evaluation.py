@@ -17,6 +17,7 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 import argparse
 from datetime import datetime
 _dedup_map = None
+THINKING = True   # === NEW: thinking ===
 def build_arg_parser():
     p = argparse.ArgumentParser(
         description="Op-CAD 多进程评测脚本（可指定 test 名/模型名 与 cop/非cop 模式）"
@@ -82,12 +83,26 @@ def build_arg_parser():
     # ==== 模型配置覆盖 ====
     p.add_argument("--gen-mode", choices=["local","api","auto"], default=None,
                help="生成模式覆盖：local/api/auto（覆盖 config.json）")
-    p.add_argument("--provider", choices=["openai","http","local","siliconflow"], default=None,
+    p.add_argument("--provider", choices=["openai","http","local","siliconflow","vllm"], default=None,
                 help="指定API提供方或本地：openai/http/local（覆盖 config.json 的 enabled）")
     p.add_argument("--openai-model", default=None, help="覆盖 OpenAI 模型名，如 gpt-4o")
     p.add_argument("--http-model", default=None, help="覆盖 HTTP 模型名，如 gpt-4o-mini")
     p.add_argument("--gen-temperature", type=float, default=None, help="覆盖生成温度")
     p.add_argument("--gen-timeout", type=int, default=None, help="覆盖生成超时秒数")
+    p.add_argument("--vllm-endpoint-key", default="port1",
+                help="当 provider=vllm 时，指定使用 config.json 中 'vllm.endpoints' 下的哪个 key (默认按 config.json 的 strategy 选)")
+    p.add_argument("--thinking", action="store_true", default=False,
+                help="启用 thinking 模式：请求模型返回含思维/轨迹的答案，并在输出目录打标签")
+    
+    # === One-shot few-shot 开关 ===
+    p.add_argument("--oneshot", action="store_true", default=False,
+                   help="启用 one-shot few-shot 示例拼接到 Prompt 中")
+    p.add_argument("--oneshot-csv", default=None,
+                   help="one_shot.csv 路径（需含: group_index, picked_as, 可选 answer）")
+    p.add_argument("--meta-csv", default="/home/baiyixue/project/op-cad/data/data_indication_out.csv",
+                   help="含 final_score/op 的 meta 表，用于计算 bin2")
+    p.add_argument("--bool-csv", default="/home/baiyixue/project/data_render/data/op_orientation/grouped_op_pairs_bool.csv",
+                   help="bool_op 表(1=add, -1=cut)")
 
     
     return p
@@ -98,6 +113,13 @@ def apply_args(args):
     global IMAGE_SIZE, FIVECROP, COP, SAVE_STEP, SAVE_RENDER, TMP_DIR, RESUME
     global SEED, DINO_MODEL_ID, NPROC, WRITE_EVERY
     global WRITE_SUMMARY
+    global THINKING
+    global ONESHOT_ON, ONESHOT_CSV, META_CSV, BOOL_CSV
+
+    ONESHOT_ON  = bool(getattr(args, "oneshot", False))
+    ONESHOT_CSV = getattr(args, "oneshot_csv", None)
+    META_CSV    = getattr(args, "meta_csv", None)
+    BOOL_CSV    = getattr(args, "bool_csv", None)
 
     # ===== 运行标识 & 目录结构 =====
     # 目录：<out-root>/<test-name>__<mode>/（附加时间戳避免覆盖，可按需去掉）
@@ -105,6 +127,7 @@ def apply_args(args):
     cm.set_runtime_config(
     gen_mode=args.gen_mode,
     provider=args.provider,
+    vllm_endpoint_key=getattr(args, "vllm_endpoint_key", None), # <-- 新增这行
     openai_model=args.openai_model,
     http_model=args.http_model,
     temperature=args.gen_temperature,
@@ -116,8 +139,13 @@ def apply_args(args):
         args.test_name = str(cm.MODEL).replace("/", "_")
 
     mode_tag = args.mode  # "std" or "cop"
+    # mode_tag_with_think = mode_tag + ("_thinking" if args.thinking else "")
     run_dir = os.path.join(args.out_root, args.test_name, mode_tag)
     os.makedirs(run_dir, exist_ok=True)
+    if "Qwen3-8B" in args.test_name:
+        THINKING = bool(args.thinking)
+    else:
+        THINKING = True
 
     PROMPTS_CSV = args.prompts_csv
     OUT_DIR = run_dir
@@ -153,13 +181,118 @@ def apply_args(args):
     WRITE_EVERY = args.write_every
 
     # 便于在日志里检索
-    print(f"[RUN] test={args.test_name}  mode={args.mode}  out_dir={OUT_DIR}")
+    print(f"[RUN] test={args.test_name}  mode={args.mode}"
+         f"  thinking={THINKING}  out_dir={OUT_DIR}")
     print(f"[RUN] prompts={PROMPTS_CSV}  nproc={NPROC}  resume={RESUME}  seed={SEED}")
 
 
 
 
 # ===================== 工具初始化 =====================
+
+# ===== One-shot 相关 =====
+_meta_map = None      # pid -> {op, final_score, bin2}
+_bool_map = None      # pid -> {bool_op}
+_oneshot_tbl = None   # picked_as -> row(dict)
+_bin2_thr = None      # 全局中位数
+
+def _load_meta_map(path: str):
+    """加载 meta: {pid: {op, final_score, bin2(自动)}} & 全局中位数阈值"""
+    global _meta_map, _bin2_thr
+    if _meta_map is not None:
+        return _meta_map
+    df = pd.read_csv(path)
+    df["group_index"] = df["group_index"].astype(str)
+    # 计算二档（若无现成 bin2 列）
+    if "bin2" in df.columns:
+        df["bin2"] = df["bin2"].astype(str).str.lower()
+        # 若 bin2 有空，仍用中位数补
+        if df["bin2"].isna().any():
+            m = df["final_score"].astype(float)
+            _bin2_thr = float(m.median())
+            df.loc[df["bin2"].isna(), "bin2"] = np.where(m <= _bin2_thr, "low", "high")
+    else:
+        m = df["final_score"].astype(float)
+        _bin2_thr = float(m.median())
+        df["bin2"] = np.where(m <= _bin2_thr, "low", "high")
+    _meta_map = df.set_index("group_index")[["op","final_score","bin2"]].to_dict(orient="index")
+    return _meta_map
+
+def _load_bool_map(path: str):
+    """加载 bool_op: {pid: {bool_op}}；无则返回空"""
+    global _bool_map
+    if _bool_map is not None:
+        return _bool_map
+    try:
+        d = pd.read_csv(path)
+        key = "group_index" if "group_index" in d.columns else ("pid" if "pid" in d.columns else None)
+        if not key or "bool_op" not in d.columns:
+            _bool_map = {}
+            return _bool_map
+        d[key] = d[key].astype(str)
+        _bool_map = d.set_index(key)[["bool_op"]].to_dict(orient="index")
+        return _bool_map
+    except Exception:
+        _bool_map = {}
+        return _bool_map
+
+def _load_oneshot_tbl(path: str):
+    """加载 one_shot.csv，按 picked_as 建索引"""
+    global _oneshot_tbl
+    if _oneshot_tbl is not None:
+        return _oneshot_tbl
+    df = pd.read_csv(path)
+    df["group_index"] = df["group_index"].astype(str)
+    if "picked_as" not in df.columns:
+        raise KeyError("one_shot.csv 需要列 picked_as")
+    _oneshot_tbl = df.groupby("picked_as").apply(lambda x: x.iloc[0]).to_dict(orient="index")
+    return _oneshot_tbl
+
+def _classify_key_for_pid(pid: str, meta_map: dict, bool_map: dict) -> Optional[str]:
+    """给当前 pid 产出分类键：extrude_add_low / extrude_step0_high / chamfer_fillet_low 等"""
+    if pid not in meta_map:
+        return None
+    info = meta_map[pid]
+    op = str(info["op"]).strip().lower()
+    bin2 = str(info.get("bin2","low")).strip().lower()
+    is_step0 = str(pid).endswith("/step0")
+    if op in ("extrude", "revolve"):
+        if is_step0:
+            return f"{op}_step0_{bin2}"
+        bo = (bool_map.get(pid, {}) or {}).get("bool_op", None)
+        if bo == 1:
+            return f"{op}_add_{bin2}"
+        elif bo == -1:
+            return f"{op}_cut_{bin2}"
+        else:
+            # 无 bool_op 时，退化为 op_bin2（可按需改更激进的回退）
+            return f"{op}_add_{bin2}"
+    elif op == "chamfer_fillet":
+        return f"chamfer_fillet_{bin2}"
+    else:
+        return None
+
+def _build_few_shot_for_pid(pid: str, pmap: dict, cop_mode: bool) -> Optional[dict]:
+    """返回一个 few-shot 示例 dict: {label, prev_code, instruction, answer}"""
+    if not ONESHOT_ON or not ONESHOT_CSV or not META_CSV:
+        return None
+    meta_map = _load_meta_map(META_CSV)
+    bool_map = _load_bool_map(BOOL_CSV) if BOOL_CSV else {}
+    key = _classify_key_for_pid(pid, meta_map, bool_map)
+    if not key:
+        return None
+    tbl = _load_oneshot_tbl(ONESHOT_CSV)
+    row = tbl.get(key)
+    if not row:
+        return None
+    ex_pid = str(row["group_index"])
+    if ex_pid == pid:
+        return None  # 避免拿当前样本做示例
+    # 取示例 prev_code 与 instruction
+    prev_code = _load_prev_code_from_dir(ex_pid, COP_PRE_CODE_DIR if cop_mode else PRE_CODE_DIR)
+    ex_instr = (pmap.get(ex_pid, {}) or {}).get("prompt_text", "")
+    ex_ans = str(row.get("answer","") or "")
+    return {"label": key, "prev_code": prev_code, "instruction": ex_instr, "answer": ex_ans}
 
 def _normalize_validity(row: dict) -> dict:
     """
@@ -764,56 +897,136 @@ def _parse_modify_blocks(gen_code: str):
             i += 1
     return blocks
 
+# def _eval_pred_edges_from_blocks(prev_code: str, gen_code: str):
+#     """
+#     执行 prev_code + 每个 selection RHS，得到 predicted 边集合（按 kind 分桶）。
+#     不执行 fillet/chamfer，只 eval 边选择表达式。
+#     """
+#     fillet_pred, chamfer_pred = [], []
+#     # 准备执行环境
+#     glb = {"cq": cq, "np": np}
+#     loc = {}
+#     # 先执行 previous_code（已有 result_*）
+#     try:
+#         exec(prev_code, glb, loc)
+#     except Exception as e:
+#         return fillet_pred, chamfer_pred, f"prev_exec_error:{e}"
+#     blocks = _parse_modify_blocks(gen_code)
+#     # 逐块处理
+#     for b in blocks:
+#         # 逐行执行 selection 之前的赋值以定义变量（但只 eval RHS）
+#         for line in b["select_lines"]:
+#             m = _ASSIGN_EDGES.match(line.strip())
+#             if not m:
+#                 # 允许一些准备行（若有），直接 exec
+#                 try:
+#                     exec(line, glb, loc)
+#                 except Exception:
+#                     pass
+#                 continue
+#             lhs, rhs = m.group("lhs"), m.group("rhs")
+#             try:
+#                 sel = eval(rhs, glb, loc)   # result_x.edges(...)
+#                 vals = list(sel.vals())
+#                 # 把 Edge 转 dict
+#                 vec = []
+#                 for i, e in enumerate(vals):
+#                     try:
+#                         center = e.Center(); length = e.Length(); g = e.geomType()
+#                         verts = [(float(v.X), float(v.Y), float(v.Z)) for v in e.Vertices()]
+#                         vec.append({"edge_index": i, "length": float(length),
+#                                     "center": (float(center.x), float(center.y), float(center.z)),
+#                                     "geomType": g, "vertices": verts})
+#                     except Exception:
+#                         continue
+#                 if b["kind"] == "fillet":
+#                     fillet_pred.extend(vec)
+#                 else:
+#                     chamfer_pred.extend(vec)
+#                 # 也把选择结果放到上下文，以防后续代码引用
+#                 loc[lhs] = sel
+#             except Exception:
+#                 continue
+#     return fillet_pred, chamfer_pred, ""
+
 def _eval_pred_edges_from_blocks(prev_code: str, gen_code: str):
     """
-    执行 prev_code + 每个 selection RHS，得到 predicted 边集合（按 kind 分桶）。
-    不执行 fillet/chamfer，只 eval 边选择表达式。
+    新版本：
+    - 不再依赖 #edges select / #operation 注释；
+    - 直接在 gen_code 中查找所有 edge_var = xxx.edges(...)
+    - 再根据 edge_var 后续是否被 .fillet() / .chamfer() 使用，决定归入哪一类。
     """
     fillet_pred, chamfer_pred = [], []
-    # 准备执行环境
+
+    # ---------- 1. 执行前序代码，构建 result_* 场景 ----------
     glb = {"cq": cq, "np": np}
     loc = {}
-    # 先执行 previous_code（已有 result_*）
     try:
         exec(prev_code, glb, loc)
     except Exception as e:
         return fillet_pred, chamfer_pred, f"prev_exec_error:{e}"
-    blocks = _parse_modify_blocks(gen_code)
-    # 逐块处理
-    for b in blocks:
-        # 逐行执行 selection 之前的赋值以定义变量（但只 eval RHS）
-        for line in b["select_lines"]:
-            m = _ASSIGN_EDGES.match(line.strip())
-            if not m:
-                # 允许一些准备行（若有），直接 exec
-                try:
-                    exec(line, glb, loc)
-                except Exception:
-                    pass
-                continue
-            lhs, rhs = m.group("lhs"), m.group("rhs")
+
+    lines = gen_code.splitlines()
+
+    # ---------- 2. 先扫一遍，记录 edge_var 对应的 op 类型 ----------
+    # 例如： shape_1 = edge_1.chamfer(0.25)  → edge_1 -> "chamfer"
+    edge_op_map = {}   # edge_var -> "fillet" / "chamfer"
+    for line in lines:
+        m_apply = _APPLY_LINE.match(line.strip() if line else "")
+        if not m_apply:
+            continue
+        var = m_apply.group("var")
+        op  = m_apply.group("op").lower()   # fillet / chamfer
+        if op in ("fillet", "chamfer"):
+            edge_op_map[var] = op
+
+    # ---------- 3. 再扫一遍，执行所有 edge_var = xxx.edges(...) ----------
+    for line in lines:
+        m_sel = _ASSIGN_EDGES.match(line.strip() if line else "")
+        if not m_sel:
+            continue
+
+        lhs = m_sel.group("lhs")   # edge_1 / edges_to_modify 之类
+        rhs = m_sel.group("rhs")   # result_2.edges(...)
+
+        try:
+            sel = eval(rhs, glb, loc)     # result_2.edges(...)
+            vals = list(sel.vals())
+        except Exception:
+            # 某一行解析失败就跳过，不影响其他行
+            continue
+
+        vec = []
+        for i, e in enumerate(vals):
             try:
-                sel = eval(rhs, glb, loc)   # result_x.edges(...)
-                vals = list(sel.vals())
-                # 把 Edge 转 dict
-                vec = []
-                for i, e in enumerate(vals):
-                    try:
-                        center = e.Center(); length = e.Length(); g = e.geomType()
-                        verts = [(float(v.X), float(v.Y), float(v.Z)) for v in e.Vertices()]
-                        vec.append({"edge_index": i, "length": float(length),
-                                    "center": (float(center.x), float(center.y), float(center.z)),
-                                    "geomType": g, "vertices": verts})
-                    except Exception:
-                        continue
-                if b["kind"] == "fillet":
-                    fillet_pred.extend(vec)
-                else:
-                    chamfer_pred.extend(vec)
-                # 也把选择结果放到上下文，以防后续代码引用
-                loc[lhs] = sel
+                center = e.Center()
+                length = e.Length()
+                g = e.geomType()
+                verts = [(float(v.X), float(v.Y), float(v.Z)) for v in e.Vertices()]
+                vec.append({
+                    "edge_index": i,
+                    "length": float(length),
+                    "center": (float(center.x), float(center.y), float(center.z)),
+                    "geomType": g,
+                    "vertices": verts,
+                })
             except Exception:
                 continue
+
+        # 根据 edge_var 后面被什么 op 使用，决定丢到哪个 bucket
+        op_kind = edge_op_map.get(lhs, None)
+
+        if op_kind == "chamfer":
+            chamfer_pred.extend(vec)
+        elif op_kind == "fillet":
+            fillet_pred.extend(vec)
+        else:
+            # 如果这个 edge_var 没有任何 chamfer/fillet 调用记录，
+            # 可以选择：
+            #   1) 忽略（continue），或者
+            #   2) 默认归入某一类，这里我选默认归到 fillet，也可以改成跳过。
+            fillet_pred.extend(vec)
+
     return fillet_pred, chamfer_pred, ""
 
 # ===================== 执行/几何有效性 =====================
@@ -929,7 +1142,7 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     import re, os
     from utils.compute_3D import get_cd_hd, MetricsResult
     from model_call.call_model import get_model_candidates
-    from model_call.prompt import build_incremental_cq_prompt
+    from model_call.prompt import build_incremental_cq_prompt_infer, build_incremental_cq_prompt
     from utils.post_code_process import build_iso_code, build_integrated_code
 
     # -------- 基本信息 --------
@@ -950,7 +1163,31 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
 
     # Prompt & 候选代码
     op_kind = str(r.get("op", "")).lower()
-    prompt = build_incremental_cq_prompt(
+
+    # === NEW: few-shot 示例（按当前 pid 分类在 one_shot.csv 中挑一条）===
+    few_shot = None
+    try:
+        pmap_all = _load_prompts_map()   # 你已有的函数
+        few = _build_few_shot_for_pid(pid, pmap_all, COP)
+        if few:
+            few_shot = [few]             # 目前只放1条；后续可扩展为多条
+    except Exception as e:
+        few_shot = None
+        print(f"[ONESHOT] build few-shot failed for {pid}: {e}")
+
+    # prompt = build_incremental_cq_prompt(
+    #     previous_code=prev_code,
+    #     operation_instruction=r["prompt_text"],
+    #     link_mode=None,
+    #     images=None,
+    #     image_prompt=None,
+    #     next_var_name="result",
+    #     allow_comments=False,
+    #     add_size_guidelines=True,
+    #     op_kind=op_kind,
+    #     few_shots=few_shot,              # <<< NEW
+    # )
+    prompt = build_incremental_cq_prompt_infer(
         previous_code=prev_code,
         operation_instruction=r["prompt_text"],
         link_mode=None,
@@ -959,11 +1196,13 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
         next_var_name="result",
         allow_comments=False,
         add_size_guidelines=True,
-        op_kind=op_kind
+        op_kind=op_kind,
+        few_shots=few_shot,              # <<< NEW
     )
+
     # print(prompt)
     # print(f"[INFO] Prompt for {pid} length (chars): {len(prompt)}") # 打印长度
-    cands = get_model_candidates(prompt, K)
+    cands = get_model_candidates(prompt, K, thinking=THINKING)
 
     # 结果收集
     per_cand_rows: List[dict] = []
@@ -999,6 +1238,62 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
             "gen_error": gen_error,
             "gen_prompt_len": len(str(prompt))  # 可选：记录 prompt 字符长度
         }
+
+        # ========= 新增：生成代码为空，直接记一条错误记录并跳过 =========
+        if not code or not code.strip():
+            if op_kind == "chamfer_fillet":
+                # CF 模式：只管 full 分支
+                row = {
+                    "group_index": pid,
+                    "k_index": k_idx,
+                    "exec_ok_full": 0,
+                    "pred_full_path": "",
+                    "cd_full": np.nan,
+                    "hd_full": np.nan,
+                    "reason_full": "empty_code",
+                    "pred_full_exists": 0,
+                    "metric_ok_full": 0,
+                    # CF 指标全置 0 / NaN
+                    "cf_num_pred_fillet": 0,
+                    "cf_num_pred_chamfer": 0,
+                    "cf_num_gt_fillet": 0,
+                    "cf_num_gt_chamfer": 0,
+                    "cf_hits_fillet": 0,
+                    "cf_hits_chamfer": 0,
+                    "cf_iou": np.nan,
+                    **gen_meta,
+                }
+                per_cand_rows.append(row)
+            else:
+                # 普通几何操作
+                row = {
+                    "group_index": pid,
+                    "k_index": k_idx,
+                    "exec_ok_single": 0,
+                    "exec_ok_full": 0,
+                    "pred_single_path": "",
+                    "pred_full_path": "",
+                    "cd_single": np.nan,
+                    "hd_single": np.nan,
+                    "cd_full": np.nan,
+                    "hd_full": np.nan,
+                    "angle_single": None,
+                    "angle_full": None,
+                    "reason_single": "empty_code",
+                    "reason_full": "empty_code",
+                    "pred_single_exists": 0,
+                    "pred_full_exists": 0,
+                    "metric_ok_single": 0,
+                    "metric_ok_full": 0,
+                    **gen_meta,
+                }
+                row = _normalize_validity(row)
+                per_cand_rows.append(row)
+
+            # 不再往下执行本轮 k 的建模 / 渲染 / 度量
+            continue
+        # ========= 空代码早退逻辑结束 =========
+
         if op_kind == "chamfer_fillet":
             # 只构建 full.py （整合代码）
             base_tmp_dir = os.path.join(TMP_DIR, pid)
@@ -1276,7 +1571,7 @@ def main_repair_parallel():
         job_args.append((fake_row, Kfix, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR))
 
     print("[Repair] 实时记录模式启动...")
-    with mp.Pool(processes=NPROC) as pool:
+    with mp.Pool(processes=NPROC,maxtasksperchild=10) as pool:
         for per_cand_rows, _, pid in tqdm(
             pool.imap_unordered(_repair_worker, job_args, chunksize=1),
             total=len(job_args), desc="[Repair-Streaming]", ncols=100
@@ -1435,7 +1730,7 @@ def main_parallel():
     buffer_count = 0
 
     # ---- 带进度条 ----
-    with mp.Pool(processes=NPROC) as pool:
+    with mp.Pool(processes=NPROC,maxtasksperchild=10) as pool:
         worker = partial(process_one, K=K, COP=COP,
                         GT_IMAGE_DIR=GT_IMAGE_DIR,
                         GT_SINGLE_STEP_DIR=GT_SINGLE_STEP_DIR,

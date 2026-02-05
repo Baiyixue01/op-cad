@@ -271,8 +271,8 @@ def get_cd_hd(
 # ---------------------- 简单测试入口（不使用 argparse） ----------------------
 if __name__ == "__main__":
     # ====== 在这里改你的入参 ======
-    STEP_A = "/data/baiyixue/CAD/step_files/00002_index_2/step1_2_3/3D.step"
-    STEP_B = "/home/baiyixue/project/op-cad/test/inference/gemini-2.5-pro/std/code_step/00002_index_2/step1/single_step/k0_single.step"
+    STEP_A = "/home/baiyixue/project/op-cad/output_a.step"
+    STEP_B = "/home/baiyixue/project/op-cad/output_b.step"
 
     NUM_POINTS = 8192
     ANGLES = [0, 90, 180, 270]

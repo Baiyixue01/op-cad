@@ -24,6 +24,29 @@ MODEL = "auto"
 #     # auto / 其它 → 走 _try_local_then_api
 #     MODEL = "auto"
 
+def _resolve_gen_params() -> Dict[str, Any]:
+    g = CFG.get("gen", {}) or {}
+    # 默认值（兜底）
+    params = {
+        "temperature": float(g.get("temperature", 0.7)),
+        "top_p": float(g.get("top_p", 1.0)) if g.get("top_p") is not None else None,
+        "top_k": int(g.get("top_k", 40)) if g.get("top_k") is not None else None,
+        "repetition_penalty": float(g.get("repetition_penalty", 1.0)) if g.get("repetition_penalty") is not None else None,
+        "presence_penalty": float(g.get("presence_penalty", 0.0)) if g.get("presence_penalty") is not None else None,
+        "out_seq_length": int(g.get("out_seq_length", 4096)),
+        "greedy": bool(g.get("greedy", False)),
+    }
+
+    # greedy 优先：统一约定 temperature=0, top_k=1（top_p 保持 1.0）
+    if params["greedy"]:
+        params["temperature"] = 0.0
+        params["top_k"] = 1
+        if params["top_p"] is None:
+            params["top_p"] = 1.0
+
+    return params
+
+
 def _adopt_siliconflow_into_http(CFG):
     """将 CFG['siliconflow'] 的配置拷贝/覆盖到 CFG['http']，供统一的 HTTP 调用使用。"""
     CFG.setdefault("http", {})
@@ -35,10 +58,70 @@ def _adopt_siliconflow_into_http(CFG):
     if sf.get("headers"):    CFG["http"]["headers"]  = sf["headers"]
     if sf.get("model"):      CFG["http"]["model"]    = sf["model"]
 
+def _adopt_vllm_into_http(CFG, endpoint_key: Optional[str] = None):
+    """
+    将 CFG['vllm'] 的配置拷贝/覆盖到 CFG['http']。
+    支持新的多端点 'endpoints' 结构，并根据策略或传入的 key 选择。
+    """
+    CFG.setdefault("http", {})
+    vllm = CFG.get("vllm", {}) or {}
+    if not vllm:
+        return
+
+    endpoints = vllm.get("endpoints", {})
+
+    # ---- 1. 检查是否使用新的 'endpoints' 结构 ----
+    if isinstance(endpoints, dict) and endpoints:
+        key_to_use = None
+        keys = list(endpoints.keys()) # 获取所有可用的 key
+        if not keys:
+            print("[WARN] vllm.endpoints is defined but empty. Falling back.")
+            # (继续执行下面的旧逻辑)
+        else:
+            # 1a. 优先使用命令行传入的 key
+            if endpoint_key and endpoint_key in endpoints:
+                key_to_use = endpoint_key
+
+            # 1b. 否则，按 config.json 中的策略选择
+            if not key_to_use:
+                strategy = vllm.get("strategy", "default")
+
+                if strategy == "round_robin":
+                    # 简单的轮询 (在多进程中，基于PID的取模是一个很好的无锁分发)
+                    idx = os.getpid() % len(keys) 
+                    key_to_use = keys[idx]
+                else: 
+                    # 默认策略: "default"
+                    key_to_use = vllm.get("default_key")
+                    if not key_to_use or key_to_use not in endpoints:
+                         print(f"[WARN] vllm.default_key='{key_to_use}' not found in endpoints. Using first key '{keys[0]}'.")
+                         key_to_use = keys[0] # 兜底选第一个
+
+            # 1c. 拿到选中的端点配置
+            chosen_endpoint = endpoints.get(key_to_use, {})
+            print(f"[vLLM] Using endpoint key: '{key_to_use}' -> {chosen_endpoint.get('base_url')}")
+
+            # 1d. 映射到 http
+            if chosen_endpoint.get("base_url"):
+                CFG["http"]["base_url"] = chosen_endpoint["base_url"]
+            if chosen_endpoint.get("headers"):
+                CFG["http"]["headers"] = chosen_endpoint["headers"]
+            if chosen_endpoint.get("model"):
+                CFG["http"]["model"] = chosen_endpoint["model"]
+            return # --- 配置完成，退出 ---
+
+    # ---- 2. 回退到旧的单体 vllm 配置 (如果 'endpoints' 不存在或为空) ----
+    print("[vLLM] Using legacy single vLLM config (no valid 'endpoints' structure found).")
+    if vllm.get("base_url"):  CFG["http"]["base_url"] = vllm["base_url"]
+    if vllm.get("headers"):   CFG["http"]["headers"]  = vllm["headers"]
+    if vllm.get("model"):     CFG["http"]["model"]    = vllm["model"]
+# ====================
+
 def set_runtime_config(
     *,
     gen_mode: Optional[str] = None,
     provider: Optional[str] = None,
+    vllm_endpoint_key: Optional[str] = None, # <-- 新增这行
     openai_model: Optional[str] = None,
     http_model: Optional[str] = None,
     temperature: Optional[float] = None,
@@ -59,8 +142,9 @@ def set_runtime_config(
     if provider:
         p = provider.lower().strip()
         CFG.setdefault("openai", {}).setdefault("enabled", False)
-        CFG.setdefault("http",   {}).setdefault("enabled", False)
+        CFG.setdefault("http",     {}).setdefault("enabled", False)
         CFG.setdefault("siliconflow", {}).setdefault("enabled", False)
+        CFG.setdefault("vllm",   {}).setdefault("enabled", False) # <-- 新增
 
         if p == "openai":
             CFG["openai"]["enabled"] = True
@@ -72,12 +156,19 @@ def set_runtime_config(
             CFG["http"]["enabled"] = True
             CFG["siliconflow"]["enabled"] = False
 
-        elif p in ("siliconflow", "sf"):  # 兼容缩写
-            # 核心：启用 http 通道，但从 siliconflow 节读取配置并写回 http
+        elif p in ("siliconflow", "sf"): 
             CFG["openai"]["enabled"] = False
             CFG["siliconflow"]["enabled"] = True
             CFG["http"]["enabled"] = True
+            CFG["vllm"]["enabled"] = False # <-- 新增
             _adopt_siliconflow_into_http(CFG)
+
+        elif p == "vllm":
+            CFG["openai"]["enabled"] = False
+            CFG["siliconflow"]["enabled"] = False
+            CFG["vllm"]["enabled"] = True
+            CFG["http"]["enabled"] = True # 核心：启用 http 通道
+            _adopt_vllm_into_http(CFG, vllm_endpoint_key) # 核心：用 vllm 配置覆盖 http
 
         elif p == "local":
             CFG["openai"]["enabled"] = False
@@ -85,6 +176,7 @@ def set_runtime_config(
             CFG["siliconflow"]["enabled"] = False
             gen_mode = gen_mode or "local"
             CFG.setdefault("gen", {})["mode"] = gen_mode
+            CFG["vllm"]["enabled"] = False # <-- 新增
 
     # 3) 模型名覆盖（优先显式入参）
     if openai_model:
@@ -127,12 +219,66 @@ result = cq.Workplane("XY").circle(10).extrude(20)
 """
     return code.strip()
 
+CODE_FENCE_RE = re.compile(r"```(?P<lang>[a-zA-Z0-9_-]*)\s*\n(?P<body>.*?)```", re.DOTALL)
+THINK_BLOCKS = [
+    (re.compile(r"<think>.*?</think>", re.DOTALL), ""),              # 常见思维块
+    (re.compile(r"<thoughts>.*?</thoughts>", re.DOTALL), ""),
+    (re.compile(r"<!--\s*BEGIN THOUGHTS\s*-->.*?<!--\s*END THOUGHTS\s*-->", re.DOTALL), ""),
+    (re.compile(r"^Thoughts:.*?(?=\n[A-Z][a-zA-Z]+:|\Z)", re.DOTALL | re.IGNORECASE | re.MULTILINE), ""),  # “Thoughts:”段
+]
+LANG_WHITELIST = {"python", "py", "cadquery", ""}  # 允许空语言围栏（``` … ```）
+
+def _strip_thinking(text: str) -> str:
+    out = text or ""
+    for pat, repl in THINK_BLOCKS:
+        out = pat.sub(repl, out)
+    return out
+
+def _score_candidate(code: str) -> int:
+    """简单评分：更像 CadQuery/Python 的得分更高；用于多候选择优。"""
+    s = code.strip()
+    score = 0
+    if "import cadquery as cq" in s: score += 5
+    if "cq.Workplane" in s: score += 3
+    if "result" in s: score += 1
+    if "# === GENERATED CODE" in s or "# === ISO export" in s: score += 2
+    if len(s) > 0: score += min(len(s)//200, 5)  # 太短的降权
+    return score
+
 def _extract_code_from_text(text: str) -> str:
     if not isinstance(text, str):
         return ""
-    m = re.search(r"```(?:python)?\s*(.+?)```", text, flags=re.S)
-    code = (m.group(1) if m else text).strip()
-    return code
+    # 1) 去掉思维/日志块（不影响正常内容）
+    cleaned = _strip_thinking(text)
+
+    # 2) 先尝试 JSON 外壳（thinking 模式常见）：{"code": "..."} 或 {"final_code": "..."}
+    try:
+        obj = json.loads(cleaned)
+        for key in ("code", "final_code", "python", "script"):
+            if isinstance(obj, dict) and isinstance(obj.get(key), str) and obj[key].strip():
+                return obj[key].strip()
+    except Exception:
+        pass
+
+    # 3) 抓取所有 fenced code，按语言白名单与启发式评分择优
+    cands = []
+    for m in CODE_FENCE_RE.finditer(cleaned):
+        lang = (m.group("lang") or "").strip().lower()
+        body = (m.group("body") or "").strip()
+        if lang in LANG_WHITELIST and body:
+            cands.append(body)
+    if cands:
+        cands.sort(key=_score_candidate, reverse=True)
+        return cands[0].strip()
+
+    # 4) 无 fenced 时的兜底：从含 CadQuery/Python 特征的行开始截到末尾
+    lines = cleaned.splitlines()
+    for i, ln in enumerate(lines):
+        if ("import cadquery as cq" in ln) or ("cq.Workplane" in ln) or ln.strip().startswith("from cadquery"):
+            return "\n".join(lines[i:]).strip()
+
+    # 5) 最终兜底：原样去首尾
+    return cleaned.strip()
 
 
 # ===== OpenAI backend =====
@@ -155,7 +301,7 @@ def _build_openai_client():
     return client, api_key
 
 
-def _gen_via_openai(prompt: str) -> Dict[str, Any]:
+def _gen_via_openai(prompt: str, thinking: bool = False) -> Dict[str, Any]:
     from openai import APIConnectionError, APITimeoutError, RateLimitError, APIError
 
     client, api_key = _build_openai_client()
@@ -164,9 +310,8 @@ def _gen_via_openai(prompt: str) -> Dict[str, Any]:
                 "backend":"openai", "err":"missing_openai_api_key"}
 
     model = CFG["openai"]["model"]
-    temperature = float(CFG["gen"]["temperature"])
+    gp = _resolve_gen_params()
 
-    # 明确处理 429：不返回错误，内部等待并重试
     tries = 0
     last_err = ""
     while tries < RATE_LIMIT_MAX_RETRIES:
@@ -174,7 +319,11 @@ def _gen_via_openai(prompt: str) -> Dict[str, Any]:
             rsp = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=temperature,
+                temperature=gp["temperature"],
+                top_p=gp["top_p"],                         # OpenAI 支持
+                presence_penalty=gp["presence_penalty"],   # OpenAI 支持
+                max_tokens=gp["out_seq_length"],           # OpenAI 支持
+                # 注：OpenAI 不支持 top_k / repetition_penalty，这里不要传
             )
             txt = (rsp.choices[0].message.content or "").strip()
             code = _extract_code_from_text(txt)
@@ -187,12 +336,9 @@ def _gen_via_openai(prompt: str) -> Dict[str, Any]:
                 "backend": "openai",
                 "err": "",
             }
-
         except RateLimitError as e:
-            # 429：吞掉、等待、继续；不把这次算作失败记录
             tries += 1
             wait_s = RATE_LIMIT_WAIT_S
-            # 若能拿到 Retry-After，优先
             try:
                 h = getattr(e, "response", None)
                 if h and hasattr(h, "headers"):
@@ -204,31 +350,43 @@ def _gen_via_openai(prompt: str) -> Dict[str, Any]:
             print(f"[429] OpenAI 限流，第 {tries}/{RATE_LIMIT_MAX_RETRIES} 次等待 {wait_s}s 之后重试")
             time.sleep(wait_s)
             continue
-
         except (APITimeoutError, APIConnectionError) as e:
-            # 短暂网络问题：温和退避
             last_err = f"{type(e).__name__}: {e}"
-            time.sleep(3)
-            tries += 1
-            continue
-
+            time.sleep(3); tries += 1; continue
         except APIError as e:
-            # 其他 APIError（非429）直接返回，让上层记录
             last_err = f"{type(e).__name__}: {e}"
             break
-
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
             break
 
-    # 走到这里要么多次 429 要么持续失败；为避免“记录429”，标注成可识别错误码，交给上层决定是否跳过
     return {"code":"", "input_tokens":None, "output_tokens":None, "total_tokens":None,
             "backend":"openai", "err":"rate_limit_exceeded"}
 
 
 
+
 # ===== HTTP backend =====
-def _gen_via_http(prompt: str) -> Dict[str, Any]:
+def _get_tokenizer():
+    # 懒加载，全局复用
+    global _TOK
+    try:
+        _TOK
+        return _TOK
+    except NameError:
+        pass
+
+    from transformers import AutoTokenizer
+    # 优先从 vllm/http 配置拿模型名；找不到就退到通用 Qwen3
+    m = (CFG.get("vllm", {}).get("tokenizer_model")
+         or CFG.get("http", {}).get("tokenizer_model")
+         or CFG.get("http", {}).get("model")
+         or "Qwen/Qwen3-8B")
+    _TOK = AutoTokenizer.from_pretrained(m, trust_remote_code=True)
+    return _TOK
+
+
+def _gen_via_http(prompt: str, thinking: bool = False) -> Dict[str, Any]:
     import requests, json
 
     try:
@@ -237,40 +395,70 @@ def _gen_via_http(prompt: str) -> Dict[str, Any]:
             return {"code":"", "input_tokens":None, "output_tokens":None, "total_tokens":None,
                     "backend":"http", "err":"http_backend_disabled"}
 
-        url = (http.get("base_url") or "").rstrip("/")
-        headers = http.get("headers")
+        base = (http.get("base_url") or "").rstrip("/")
+        headers = dict(http.get("headers") or {})
+        headers.setdefault("Content-Type", "application/json")
         model = http.get("model", "gpt-4")
-        temperature = float(CFG["gen"].get("temperature", 0.7))
         timeout_s = int(CFG["gen"].get("timeout_s", 1800))
-        if not url:
-            return {"code":"", "input_tokens":None, "output_tokens":None, "total_tokens":None,
-                    "backend":"http", "err":"missing_base_url_or_endpoint"}
 
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": temperature,
+        gp = _resolve_gen_params()
+
+        # 公共采样参数（大多数 vLLM/自建接口会识别）
+        sampling = {
+            "temperature": gp["temperature"],
+            "top_p": gp["top_p"],
+            "top_k": gp["top_k"],
+            "repetition_penalty": gp["repetition_penalty"],
+            "presence_penalty": gp["presence_penalty"],
+            "max_tokens": gp["out_seq_length"],      # 有些实现用 max_new_tokens；若需要可同时传
+            # "max_new_tokens": gp["out_seq_length"],
         }
+        # 删除 None 项，避免某些服务端报错
+        sampling = {k: v for k, v in sampling.items() if v is not None}
+
+        if thinking:
+            # chat-style
+            endpoint = base
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                **sampling,
+            }
+        else:
+            # completions-style：手工渲染对话模板
+            tok = _get_tokenizer()
+            messages = [{"role": "user", "content": prompt}]
+            rendered = tok.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+            endpoint = base
+            payload = {
+                "model": model,
+                "prompt": rendered,
+                **sampling,
+            }
 
         tries = 0
         while tries < RATE_LIMIT_MAX_RETRIES:
             try:
-                r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=timeout_s)
+                r = requests.post(endpoint, headers=headers, data=json.dumps(payload), timeout=timeout_s)
                 if r.status_code == 429:
                     tries += 1
-                    wait_s = RATE_LIMIT_WAIT_S
-                    ra = r.headers.get("Retry-After")
-                    if ra:
-                        try: wait_s = int(ra)
-                        except: pass
+                    wait_s = int(r.headers.get("Retry-After", RATE_LIMIT_WAIT_S))
                     print(f"[429] HTTP 限流，第 {tries}/{RATE_LIMIT_MAX_RETRIES} 次等待 {wait_s}s 之后重试")
                     time.sleep(wait_s)
-                    continue  # 不返回、不落盘
+                    continue
                 r.raise_for_status()
                 rsp = r.json()
 
-                choices = rsp.get("choices") or []
-                txt = (choices[0]["message"]["content"] if choices else "").strip()
+                if thinking:
+                    txt = (rsp.get("choices",[{}])[0].get("message",{}).get("content","") or "").strip()
+                else:
+                    txt = (rsp.get("choices",[{}])[0].get("text","") or "").strip()
+
                 code = _extract_code_from_text(txt)
                 usage = rsp.get("usage", {}) or {}
                 return {
@@ -281,25 +469,25 @@ def _gen_via_http(prompt: str) -> Dict[str, Any]:
                     "backend": "http",
                     "err": "",
                 }
+
             except requests.HTTPError as e:
-                # 非 429 的 HTTP 错误：直接返回，让上层记录
                 return {"code":"", "input_tokens":None, "output_tokens":None, "total_tokens":None,
                         "backend":"http", "err": f"HTTPError:{e}"}
             except Exception as e:
-                # 其它异常：温和重试几次
                 tries += 1
                 if tries >= 3:
                     return {"code":"", "input_tokens":None, "output_tokens":None, "total_tokens":None,
                             "backend":"http", "err": f"{type(e).__name__}: {e}"}
                 time.sleep(3)
 
-        # 多次 429 仍未成功
         return {"code":"", "input_tokens":None, "output_tokens":None, "total_tokens":None,
                 "backend":"http", "err":"rate_limit_exceeded"}
 
     except Exception as e:
         return {"code":"", "input_tokens":None, "output_tokens":None, "total_tokens":None,
                 "backend":"http", "err": f"{type(e).__name__}: {e}"}
+
+
 
 
 
@@ -347,7 +535,7 @@ def _try_local_then_api(prompt: str) -> Dict[str, Any]:
     }
 
 
-def get_model_candidates(prompt: str, k: int = None) -> List[Dict[str, Any]]:
+def get_model_candidates(prompt: str, k: int, *, thinking: bool = False):
     mode = str(CFG["gen"]["mode"]).lower()
     results: List[Dict[str, Any]] = []
     pid = os.getpid()
@@ -364,9 +552,9 @@ def get_model_candidates(prompt: str, k: int = None) -> List[Dict[str, Any]]:
                 }
             elif mode == "api":
                 if CFG["openai"]["enabled"]:
-                    result = _gen_via_openai(prompt)
+                    result = _gen_via_openai(prompt,thinking=thinking)
                 elif CFG["http"]["enabled"]:
-                    result = _gen_via_http(prompt)
+                    result = _gen_via_http(prompt,thinking=thinking)
                 else:
                     raise RuntimeError("API mode enabled but no API backend selected.")
             else:

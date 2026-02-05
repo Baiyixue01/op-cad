@@ -1,8 +1,15 @@
 {
   "gen": {
-    "mode": "api",       
-    "temperature": 0.7,
-    "timeout_s": 1800
+    "mode": "api",
+    "k": 5,
+    "temperature": 1.0,
+    "timeout_s": 1800,
+    "greedy": false,
+    "top_p": 1.0,
+    "top_k": 40,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 2.0,
+    "out_seq_length": 32768
   },
   "openai": {
     "enabled": false,
@@ -11,6 +18,54 @@
     "model": "gemini-2.5-pro",
     "organization": "",          
     "project": ""               
+  },
+  "vllm": {
+    "enabled": true,
+    "base_url": "http://localhost:8000/v1/chat/completions",
+    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "default_key": "default",
+    "tokenizer_model": "/data/baiyixue/inference_model/Qwen_Qwen3-8B", 
+    "endpoints": {
+      "port-1": {
+        "base_url": "http://localhost:8003/v1/completions",
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "headers": {}
+      },
+      "port0": {
+        "base_url": "http://localhost:8002/v1/completions",
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "headers": {}
+      },
+      "port1": {
+        "base_url": "http://localhost:8001/v1/chat/completions",
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "headers": {}
+      },
+      "port2": {
+        "base_url": "http://localhost:8001/v1/chat/completions",
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "headers": {}
+      },
+      "port3": {
+        "base_url": "http://localhost:8020/v1/chat/completions",
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "headers": {}
+      },
+      "port4": {
+        "base_url": "http://localhost:8002/v1/chat/completions",
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "headers": {}
+      },
+      "port5": {
+        "base_url": "http://localhost:8004/v1/chat/completions",
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "headers": {}
+      }
+    },
+    "headers": {
+      "Authorization": "Bearer YOUR_API_KEY_IF_NEEDED",
+      "Content-Type": "application/json"
+    }
   },
   "http": {
     "enabled": true,
