@@ -219,8 +219,8 @@ _export_any({lhs}, r"{iso_export_path}")
 """.rstrip()
 
     parts = []
-    if (previous_code or "").strip():
-        parts.append(previous_code.rstrip())
+    # if (previous_code or "").strip():
+    #     parts.append(previous_code.rstrip())
     # 加一个分节标记，方便排查
     if first_step:
         parts.append(head)
