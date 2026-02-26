@@ -42,12 +42,12 @@
         "headers": {}
       },
       "port2": {
-        "base_url": "http://localhost:8001/v1/chat/completions",
+        "base_url": "http://localhost:8002/v1/completions",
         "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
         "headers": {}
       },
       "port3": {
-        "base_url": "http://localhost:8020/v1/chat/completions",
+        "base_url": "http://localhost:8003/v1/chat/completions",
         "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
         "headers": {}
       },

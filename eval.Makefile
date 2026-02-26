@@ -242,22 +242,6 @@ llama70_std:
 		--http-model Llama-3.1-70B-Instruct \
 		--nproc 4 \
 
-qwen3_std_wo_thinking:
-	$(PYTHON) $(SCRIPT) --mode std \
-		--out-root /home/baiyixue/project/op-cad/inference_results \
-		--prompts-csv /home/baiyixue/project/op-cad/data/prompt.csv \
-		--gt-image-dir /data/baiyixue/CAD/screenshots \
-		--gt-single-step-dir /data/baiyixue/CAD/step_files \
-		--op-orient-dir /data/baiyixue/CAD/op_orientated_step \
-		--dedup-csv /home/baiyixue/project/data_render/data/op_orientation/grouped_op_pairs_index.csv \
-		--gt-edges-dir /home/baiyixue/project/op-cad/data/gt_edges_json \
-		--split-json /home/baiyixue/project/op-cad/data/split_result.json \
-		--split-key test \
-		--gen-mode api \
-		--provider vllm \
-		--vllm-endpoint-key port0\
-		--http-model Qwen_Qwen3-8B_WOT \
-		--nproc
 
 qwen3_cop_wo_thinking:
 	$(PYTHON) $(SCRIPT) --mode cop \
@@ -537,26 +521,6 @@ llama-3.1-8b-instruct_cop:
 		--http-model Llama-3.1-8B-Instruct-BDATA-lora \
 		--nproc 16
 
-qwen3_std_wo_thinking:
-	$(PYTHON) $(SCRIPT) --mode std \
-		--pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_scale_short \
-		--cop-pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_cop_scale_short \
-		--meta-csv /home/baiyixue/project/op-cad/data/data_indication_out.csv \
-		--bool-csv /home/baiyixue/project/data_render/data/op_orientation/grouped_op_pairs_bool.csv \
-		--out-root /data/baiyixue/CAD/inference_result/main \
-		--prompts-csv /home/baiyixue/project/op-cad/data/prompt.csv \
-		--gt-image-dir /data/baiyixue/CAD/screenshots \
-		--gt-single-step-dir /data/baiyixue/CAD/step_files \
-		--op-orient-dir /data/baiyixue/CAD/op_orientated_step \
-		--dedup-csv /home/baiyixue/project/data_render/data/op_orientation/grouped_op_pairs_index.csv \
-		--gt-edges-dir /home/baiyixue/project/op-cad/data/gt_edges_json \
-		--split-json /home/baiyixue/project/op-cad/data/split_result.json \
-		--split-key test \
-		--gen-mode api \
-		--provider vllm \
-		--vllm-endpoint-key port0\
-		--http-model Qwen_Qwen3-8B-BDATA \
-		--nproc 16
 
 qwen3_cop_wo_thinking:
 	$(PYTHON) $(SCRIPT) --mode cop \
@@ -953,18 +917,18 @@ qwen3lorastd_cop_wo_thinking_plane:
 
 llama-3.1-8b-std:
 	$(PYTHON) $(SCRIPT) --mode std \
-		--pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_sketch \
-		--cop-pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_cop_sketch \
+		--pre-code-dir /home/baiyixue/project/op-cad/data/pre_code \
+		--cop-pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_cop \
 		--meta-csv /home/baiyixue/project/op-cad/data/data_indication_out.csv \
-		--bool-csv /home/baiyixue/project/data_render/data/op_orientation/grouped_op_pairs_bool.csv \
+		--bool-csv /home/baiyixue/project/op-cad/data/bool.csv \
 		--out-root /data/baiyixue/CAD/inference_result/Bdata_v2 \
 		--prompts-csv /home/baiyixue/project/op-cad/data/prompt.csv \
 		--gt-image-dir /data/baiyixue/CAD/screenshots \
 		--gt-single-step-dir /data/baiyixue/CAD/step_files_sketch \
 		--op-orient-dir /data/baiyixue/CAD/op_oriented_step_sketch \
-		--dedup-csv /home/baiyixue/project/data_render/data/op_orientation/grouped_op_pairs_index.csv \
-		--gt-edges-dir /home/baiyixue/project/op-cad/data/gt_edges_json_sketch_new \
-		--split-json /home/baiyixue/project/op-cad/data/test_subset.json \
+		--dedup-csv /home/baiyixue/project/op-cad/data/dedup.csv \
+		--gt-edges-dir /home/baiyixue/project/op-cad/data/gt_edges_json \
+		--split-json /home/baiyixue/project/op-cad/data/small_subset.json \
 		--split-key test \
 		--gen-mode api \
 		--provider vllm \
@@ -994,6 +958,89 @@ llama-3.1-8b-cop:
 		--http-model Llama-3.1-8B-Instruct \
 		--nproc 8
 
+qwen3_std_wo_thinking:
+	$(PYTHON) $(SCRIPT) --mode std \
+		--pre-code-dir /home/baiyixue/project/op-cad/data/pre_code \
+		--cop-pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_cop \
+		--meta-csv /home/baiyixue/project/op-cad/data/data_indication_out.csv \
+		--bool-csv /home/baiyixue/project/op-cad/data/bool.csv \
+		--out-root /data/baiyixue/CAD/inference_result/Bdata_v2 \
+		--prompts-csv /home/baiyixue/project/op-cad/data/prompt.csv \
+		--gt-image-dir /data/baiyixue/CAD/screenshots \
+		--gt-single-step-dir /data/baiyixue/CAD/step_files_sketch \
+		--op-orient-dir /data/baiyixue/CAD/op_oriented_step_sketch \
+		--dedup-csv /home/baiyixue/project/op-cad/data/dedup.csv \
+		--gt-edges-dir /home/baiyixue/project/op-cad/data/gt_edges_json \
+		--split-json /home/baiyixue/project/op-cad/data/small_subset.json \
+		--split-key test \
+		--gen-mode api \
+		--provider vllm \
+		--vllm-endpoint-key port2\
+		--http-model Qwen_Qwen3-8B \
+		--nproc 16
+
+Llama-3.1-8B_full_std:
+	$(PYTHON) $(SCRIPT) --mode std \
+		--pre-code-dir /home/baiyixue/project/op-cad/data/pre_code \
+		--cop-pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_cop \
+		--meta-csv /home/baiyixue/project/op-cad/data/data_indication_out.csv \
+		--bool-csv /home/baiyixue/project/op-cad/data/bool.csv \
+		--out-root /data/baiyixue/CAD/inference_result/Bdata_v2 \
+		--prompts-csv /home/baiyixue/project/op-cad/data/prompt.csv \
+		--gt-image-dir /data/baiyixue/CAD/screenshots \
+		--gt-single-step-dir /data/baiyixue/CAD/step_files_sketch \
+		--op-orient-dir /data/baiyixue/CAD/op_oriented_step_sketch \
+		--dedup-csv /home/baiyixue/project/op-cad/data/dedup.csv \
+		--gt-edges-dir /home/baiyixue/project/op-cad/data/gt_edges_json \
+		--split-json /home/baiyixue/project/op-cad/data/small_subset.json \
+		--split-key test \
+		--gen-mode api \
+		--provider vllm \
+		--vllm-endpoint-key port1\
+		--http-model llama_3.1_8b_coop_sft_full \
+		--nproc 32
+
+Llama-3.1-8B_full_std_full:
+	$(PYTHON) $(SCRIPT) --mode std \
+		--pre-code-dir /home/baiyixue/project/op-cad/data/pre_code \
+		--cop-pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_cop \
+		--meta-csv /home/baiyixue/project/op-cad/data/data_indication_out.csv \
+		--bool-csv /home/baiyixue/project/op-cad/data/bool.csv \
+		--out-root /data/baiyixue/CAD/inference_result/main \
+		--prompts-csv /home/baiyixue/project/op-cad/data/prompt.csv \
+		--gt-image-dir /data/baiyixue/CAD/screenshots \
+		--gt-single-step-dir /data/baiyixue/CAD/step_files_sketch \
+		--op-orient-dir /data/baiyixue/CAD/op_oriented_step_sketch \
+		--dedup-csv /home/baiyixue/project/op-cad/data/dedup.csv \
+		--gt-edges-dir /home/baiyixue/project/op-cad/data/gt_edges_json \
+		--split-json /home/baiyixue/project/op-cad/data/split_result.json \
+		--split-key test \
+		--gen-mode api \
+		--provider vllm \
+		--vllm-endpoint-key port1 \
+		--http-model llama_3.1_8b_coop_sft_full \
+		--nproc 32
+
+Llama-3.1-8B_full_cop_full:
+	$(PYTHON) $(SCRIPT) --mode cop \
+		--pre-code-dir /home/baiyixue/project/op-cad/data/pre_code \
+		--cop-pre-code-dir /home/baiyixue/project/op-cad/data/pre_code_cop \
+		--meta-csv /home/baiyixue/project/op-cad/data/data_indication_out.csv \
+		--bool-csv /home/baiyixue/project/op-cad/data/bool.csv \
+		--out-root /data/baiyixue/CAD/inference_result/main \
+		--prompts-csv /home/baiyixue/project/op-cad/data/prompt.csv \
+		--gt-image-dir /data/baiyixue/CAD/screenshots \
+		--gt-single-step-dir /data/baiyixue/CAD/step_files_sketch \
+		--op-orient-dir /data/baiyixue/CAD/op_oriented_step_sketch \
+		--dedup-csv /home/baiyixue/project/op-cad/data/dedup.csv \
+		--gt-edges-dir /home/baiyixue/project/op-cad/data/gt_edges_json \
+		--split-json /home/baiyixue/project/op-cad/data/split_result.json \
+		--split-key test \
+		--gen-mode api \
+		--provider vllm \
+		--vllm-endpoint-key port1 \
+		--http-model llama_3.1_8b_coop_sft_full \
+		--nproc 32
 
 # ===== 修正模式 =====
 repair:

@@ -140,7 +140,8 @@ def _last_assigned_var(code_block: str, default: str = "shape") -> str:
 #     )
 #     return iso_code, lhs
 
-def build_iso_code(previous_code: str, generated_code: str, iso_export_path: str,first_step: bool) -> Tuple[str, str]:
+
+def build_iso_code(previous_code: str, generated_code: str, iso_export_path: str, first_step: bool) -> Tuple[str, str]:
     """
     构建“单步（isolated）导出”代码：
     变量选择优先级：
@@ -148,6 +149,9 @@ def build_iso_code(previous_code: str, generated_code: str, iso_export_path: str
       2) 以 'shape' 开头（如 shape0, shape_iso, shape_tmp）的最后一次赋值
       3) 若都没有，则取最后一个出现的赋值变量
     导出时自动兼容 Workplane/Shape：优先尝试 .val()，失败则直接导出对象本身。
+    额外保险：
+      - 若存在 #bool，保证 #bool 及其后内容绝不输出
+      - 若最终块的最后一行以 result_<数字> 开头，则删除该行（不管 RHS 是什么）
     返回：(合并后的源码, 选中的 lhs 变量名)
     """
     def _strip_fences(s: str) -> str:
@@ -156,7 +160,7 @@ def build_iso_code(previous_code: str, generated_code: str, iso_export_path: str
             # 去掉 ```python ... ``` 包裹
             first_close = s.find("```", 3)
             if first_close != -1:
-                s = s[3:first_close] if "```" not in s[first_close+3:] else s.split("```", 1)[1]
+                s = s[3:first_close] if "```" not in s[first_close + 3:] else s.split("```", 1)[1]
         if s.endswith("```"):
             s = s[: s.rfind("```")]
         return s.strip()
@@ -181,32 +185,51 @@ def build_iso_code(previous_code: str, generated_code: str, iso_export_path: str
         # 3) 最后一个赋值变量
         return lhs_all[-1] if lhs_all else "shape"
 
+    def _drop_trailing_result_line(block: str) -> str:
+        ls = block.splitlines()
+        # 去掉末尾空行
+        while ls and ls[-1].strip() == "":
+            ls.pop()
+        # 如果最后一行以 result_<digits> 开头，删掉整行（不管后面是什么）
+        if ls and re.match(r"^\s*result_\d+\b", ls[-1]):
+            ls.pop()
+            while ls and ls[-1].strip() == "":
+                ls.pop()
+        return "\n".join(ls).rstrip()
+
     src = _strip_fences(generated_code)
     lines = src.splitlines()
 
-    # 可选：从 “# shape” 与 “# bool” 之间提取主体几何段
-    shape_idx = next((i for i, l in enumerate(lines) if re.match(r"^\s*#\s*shape\s*$", l, re.I)), -1)
-    bool_idx  = next((i for i, l in enumerate(lines) if re.match(r"^\s*#\s*bool\s*$",  l, re.I)), -1)
+    # 找到 #bool，并“全局裁掉” #bool 及其后内容（保证不会输出）
+    bool_idx = next((i for i, l in enumerate(lines) if re.match(r"^\s*#\s*bool\s*$", l, re.I)), -1)
+    lines_upto_bool = lines[:bool_idx] if bool_idx >= 0 else lines
 
-    if 0 <= shape_idx < bool_idx:
-        shape_block = "\n".join(lines[shape_idx + 1: bool_idx]).strip()
-    elif shape_idx >= 0:
-        shape_block = "\n".join(lines[shape_idx + 1:]).strip()
+    # 在裁剪后的范围内找 #shape
+    shape_idx = next((i for i, l in enumerate(lines_upto_bool) if re.match(r"^\s*#\s*shape\s*$", l, re.I)), -1)
+
+    if shape_idx >= 0:
+        # 从 #shape 后到 #bool 前（或文件末尾）作为 shape_block
+        shape_block = "\n".join(lines_upto_bool[shape_idx + 1:]).strip()
     else:
-        # 找不到 # shape 标记，退回用整段代码做候选
-        shape_block = src
+        # 没有 #shape，就用 “#bool 之前” 的所有内容
+        shape_block = "\n".join(lines_upto_bool).strip()
 
-    lhs_candidates = _collect_lhs(shape_block if shape_block.strip() else src)
+    # 最后一行如果是 result_<digits>... 则删除
+    shape_block = _drop_trailing_result_line(shape_block)
+
+    # 如果裁剪后为空，兜底仍然只取 bool 前部分（避免泄漏）
+    if not shape_block.strip():
+        shape_block = _drop_trailing_result_line("\n".join(lines_upto_bool).strip())
+
+    lhs_candidates = _collect_lhs(shape_block if shape_block.strip() else "\n".join(lines_upto_bool))
     lhs = _pick_lhs_by_priority(lhs_candidates)
 
-    # 统一导出：兼容 Workplane(.val()) 与 Shape 直接导出
-    head = ""
-    if first_step:
-        head = (
-            f"import cadquery as cq\n"
-            f"from cadquery import Plane, Vector, Workplane\n"
-            f"from functools import reduce\n"
-        )
+    head = (
+        f"import cadquery as cq\n"
+        f"from cadquery import Plane, Vector, Workplane\n"
+        f"from functools import reduce\n"
+    )
+
     export_tail = f"""
 # === ISO export ===
 def _export_any(obj, path):
@@ -221,11 +244,9 @@ _export_any({lhs}, r"{iso_export_path}")
     parts = []
     # if (previous_code or "").strip():
     #     parts.append(previous_code.rstrip())
-    # 加一个分节标记，方便排查
-    if first_step:
-        parts.append(head)
+    parts.append(head)
     parts.append("# === SHAPE ===\n")
-    parts.append(shape_block.rstrip() if shape_block.strip() else src.rstrip())
+    parts.append(shape_block.rstrip() if shape_block.strip() else "\n".join(lines_upto_bool).rstrip())
     parts.append(export_tail)
 
     merged = "\n\n".join(parts).rstrip() + "\n"

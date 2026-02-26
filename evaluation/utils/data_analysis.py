@@ -7,9 +7,9 @@ import os, re, argparse
 from pathlib import Path
 
 # ========= 默认根路径配置（可被命令行覆盖） =========
-TEST_DIR_DEFAULT = "/data/baiyixue/CAD/inference_result/main/llama-3.1-8b-instruct"
+TEST_DIR_DEFAULT = "/data/baiyixue/CAD/inference_result/main/llama_3.1_8b_coop_sft_full"
 OP_CSV_DEFAULT   = "/home/baiyixue/project/op-cad/data/prompt.csv"  # 含 group_index, op
-TXT_ROOT_DEFAULT = "/home/baiyixue/project/op-cad/results"
+TXT_ROOT_DEFAULT = "/home/baiyixue/project/op-cad/results_v2_large"
 # ======================================
 
 # ---------- 工具函数（保持你原版逻辑） ----------

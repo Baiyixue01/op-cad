@@ -20,7 +20,7 @@ def build_incremental_cq_prompt(
     images: Optional[List[Dict]] = None,
     image_prompt: Optional[str] = None,
     allow_comments: bool = False,
-    add_size_guidelines: bool = True,
+    add_size_guidelines: bool = False,
     op_kind: Optional[str] = None,
     few_shots: Optional[List[Dict]] = None,
 ) -> str:
@@ -87,14 +87,14 @@ def build_incremental_cq_prompt(
         linking_note = dedent("""
         ### Linking Notice
         - This is the **first modeling step**.
-        - Follow the required output format. If a boolean result is not applicable, assign `result = shape` in **#bool**.
+        - Assign `result = shape` in **#bool**.
         """).strip()
     else:
         # link_mode 仅用于“建议措辞”，不改变约束逻辑（保持原功能）
         if link_mode == "inplace" and cur_var:
             assign_hint = f"- Prefer updating **{cur_var}** in-place (suggestion only)."
         else:
-            assign_hint = f"- Prefer assigning the new result to **{next_var_name}** (suggestion only)."
+            assign_hint = f"- Assign the new result to **{next_var_name}**."
 
         linking_note = dedent(f"""
         ### Linking Suggestion
@@ -210,14 +210,21 @@ Perform the following operation **as a continuation** of the existing model:
     if is_modify:
         sections.append(modify_rules)
         sections.append(dedent("""
-        ### Output Format (STRICT)
+        ### Output Format (STRICT) — Single Edge Selection
         ```python
         wp = cq.Workplane(inPlane=Plane(origin=(0, 0, 0), normal=Vector(0, 0, 1), xDir=Vector(1, 0, 0)))
-        edges_1 = result_m.edges({edge_selection})
-        result_n = edges_1.{operation}(...)
-        edges_2 = result_n.edges({edge_selection})
-        result_{n+1} = edges_2.{operation}(...)
+        edges = result_n.edges({edge_selection})
+        result = edges.{operation}(...)
+        ```
+        ### Output Format (STRICT) — Multi Edge Selections
+        ```python
+        wp = cq.Workplane(inPlane=Plane(origin=(0, 0, 0), normal=Vector(0, 0, 1), xDir=Vector(1, 0, 0)))
+        edges_1 = result_n.edges({edge_selection_1})
+        shape_1 = edges_1.{operation}(...)
+        edges_2 = result_n.edges({edge_selection_2})
+        shape_2 = edges_2.{operation}(...)
         ...
+        result = reduce(lambda a, b: a.intersect(b), [shape_1, shape_2, ...])
         ```
         """).strip())
     else:
@@ -247,7 +254,7 @@ def build_incremental_cq_prompt_infer(
     images: Optional[List[Dict]] = None,
     image_prompt: Optional[str] = None,
     allow_comments: bool = False,
-    add_size_guidelines: bool = True,
+    add_size_guidelines: bool = False,
     op_kind: Optional[str] = None,
     few_shots: Optional[List[Dict]] = None,
 ) -> str:
@@ -308,3 +315,26 @@ def build_incremental_cq_prompt_infer(
     """).strip()
 
     return prompt
+
+
+if __name__ == "__main__":
+    # ====== 1) 准备一个 previous_code（模拟已执行的上下文）======
+    previous_code = dedent("""
+    """).strip()
+
+    # ====== 2) 准备一个操作指令 ======
+    operation_instruction = "Remove a cylindrical through hole at the center of the top face."
+
+    # ====== 3) 生成训练阶段 prompt（规则更硬）======
+    prompt_train = build_incremental_cq_prompt(
+        previous_code=previous_code,
+        operation_instruction=operation_instruction,
+        next_var_name="result",
+        op_kind="chamfer",              # 非 fillet/chamfer，走 shape+bool 规则
+        allow_comments=False,
+    )
+
+    print("\n" + "=" * 80)
+    print("TRAIN PROMPT")
+    print("=" * 80)
+    print(prompt_train)

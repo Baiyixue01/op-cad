@@ -451,28 +451,25 @@ def _append_csv(path: str, rows: List[dict]):
 
     df = pd.DataFrame(rows)
 
-    # ---- 强制补齐 + 强转 int（你最关心的几列）----
+    # 只对存在的列做转换；不补齐；不 fillna(0)
     int_cols = ["exec_ok_single","exec_ok_full",
                 "metric_ok_single","metric_ok_full",
                 "pred_single_exists","pred_full_exists"]
     for c in int_cols:
-        if c not in df.columns:
-            df[c] = 0
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+        if c in df.columns:
+            # 用 pandas 可空整数，允许 <NA>
+            df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int64")
 
     header = not os.path.exists(path)
 
     if header:
-        # 第一次写：就按 df 当前列写 header
         df.to_csv(path, mode="w", header=True, index=False)
         return
 
-    # 之后追加：必须按已有文件 header 的列顺序写
     with open(path, "r", encoding="utf-8") as f:
-        first_line = f.readline().strip()
-    old_cols = first_line.split(",")
+        old_cols = f.readline().strip().split(",")
 
-    # 如果 df 出现了新列：最稳的是“重写全文件”（否则追加会丢列）
+    # 如果出现新列：仍然建议走“重写全文件”逻辑（否则追加会丢新列）
     new_cols = [c for c in df.columns if c not in old_cols]
     if new_cols:
         old = pd.read_csv(path, low_memory=False)
@@ -480,12 +477,12 @@ def _append_csv(path: str, rows: List[dict]):
         old = old.reindex(columns=all_cols)
         df  = df.reindex(columns=all_cols)
         out = pd.concat([old, df], ignore_index=True)
-        _write_csv_atomic(out, path)   # 你已经有这个原子写
+        _write_csv_atomic(out, path)
         return
 
-    # 正常追加：只对齐已有列顺序
     df = df.reindex(columns=old_cols)
     df.to_csv(path, mode="a", header=False, index=False)
+
 
 
 def _numbers_in_folder_suffix(folder_name: str, step_prefix: str) -> List[int]:
@@ -1207,16 +1204,16 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     # Prompt & 候选代码
     op_kind = str(r.get("op", "")).lower()
 
-    # === NEW: few-shot 示例（按当前 pid 分类在 one_shot.csv 中挑一条）===
-    few_shot = None
-    try:
-        pmap_all = _load_prompts_map()   # 你已有的函数
-        few = _build_few_shot_for_pid(pid, pmap_all, COP)
-        if few:
-            few_shot = [few]             # 目前只放1条；后续可扩展为多条
-    except Exception as e:
-        few_shot = None
-        print(f"[ONESHOT] build few-shot failed for {pid}: {e}")
+    # # === NEW: few-shot 示例（按当前 pid 分类在 one_shot.csv 中挑一条）===
+    # few_shot = None
+    # try:
+    #     pmap_all = _load_prompts_map()   # 你已有的函数
+    #     few = _build_few_shot_for_pid(pid, pmap_all, COP)
+    #     if few:
+    #         few_shot = [few]             # 目前只放1条；后续可扩展为多条
+    # except Exception as e:
+    #     few_shot = None
+    #     print(f"[ONESHOT] build few-shot failed for {pid}: {e}")
 
     prompt = build_incremental_cq_prompt(
         previous_code=prev_code,
@@ -1226,9 +1223,7 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
         image_prompt=None,
         next_var_name="result",
         allow_comments=False,
-        add_size_guidelines=True,
-        op_kind=op_kind,
-        few_shots=few_shot,              # <<< NEW
+        op_kind=op_kind
     )
     # prompt = build_incremental_cq_prompt_infer(
     #     previous_code=prev_code,
