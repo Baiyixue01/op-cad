@@ -98,7 +98,7 @@ def build_incremental_cq_prompt(
 
         linking_note = dedent(f"""
         ### Linking Suggestion
-        - Treat **{cur_var or 'the latest result variable'}** as the current solid.
+        - Treat **{cur_var}** as the current solid.
         {assign_hint}
         """).strip()
 

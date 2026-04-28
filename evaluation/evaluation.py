@@ -7,6 +7,9 @@ import numpy as np
 import cadquery as cq
 from model_call import call_model as cm
 import os, re, ast
+import sys
+import signal
+import subprocess
 from typing import Optional, Tuple, List
 # Linux 下建议显式设置以避免 OpenBLAS 抢核
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -45,11 +48,14 @@ def build_arg_parser():
     # 代码/GT 目录
     p.add_argument("--pre-code-dir", default="./data/pre_code", help="非COP：前序代码目录")
     p.add_argument("--cop-pre-code-dir",default="./data/pre_code_cop", help="COP：前序代码目录（增量链）")
+    p.add_argument("--full-pre-code-dir", default="./data/full_pre_code", help="非COP：前序代码目录（累计到当前 step）")
     p.add_argument("--gt-image-dir", required=True, help="GT 渲染图根目录")
     p.add_argument("--gt-single-step-dir", required=True, help="单步GT STEP根目录")
     p.add_argument("--op-orient-dir", required=True, help="整体形状（累计到 stepN）的 STEP 根目录")
     p.add_argument("--dedup-csv", required=True, help="去重映射 CSV（group_index, duplicate_of_group_index）")
     p.add_argument("--gt-edges-dir", required=True, help="GT 边目录（之前抽取的 JSON 根目录，例如 /home/.../gt_edges_json）")
+    p.add_argument("--gt-single-pc-dir", default=None, help="可选：单步GT点云 NPY 根目录；提供后 3D 评测优先读 .npy")   
+    p.add_argument("--gt-full-pc-dir", default=None, help="可选：累计形状GT点云 NPY 根目录；提供后 3D 评测优先读 .npy")    
 
     # 评测与渲染参数
     p.add_argument("--k", type=int, default=2, help="pass@k 的 k")
@@ -108,8 +114,8 @@ def build_arg_parser():
     return p
 
 def apply_args(args):
-    global PROMPTS_CSV, OUT_DIR, PRE_CODE_DIR, COP_PRE_CODE_DIR, GT_IMAGE_DIR, DEDUP_CSV, GT_EDGES_DIR
-    global GT_SINGLE_STEP_DIR, OP_ORIENT_DIR, K, DEVICE, PASS_METRIC, COS_THRESHOLD
+    global PROMPTS_CSV, OUT_DIR, PRE_CODE_DIR, COP_PRE_CODE_DIR, GT_IMAGE_DIR, DEDUP_CSV, GT_EDGES_DIR,FULL_PRE_CODE_DIR
+    global GT_SINGLE_STEP_DIR,  GT_SINGLE_PC_DIR, GT_FULL_PC_DIR, OP_ORIENT_DIR, K, DEVICE, PASS_METRIC, COS_THRESHOLD
     global IMAGE_SIZE, FIVECROP, COP, SAVE_STEP, SAVE_RENDER, TMP_DIR, RESUME
     global SEED, DINO_MODEL_ID, NPROC, WRITE_EVERY
     global WRITE_SUMMARY
@@ -153,6 +159,7 @@ def apply_args(args):
     WRITE_SUMMARY = args.write_summary
 
     PRE_CODE_DIR = args.pre_code_dir
+    FULL_PRE_CODE_DIR = args.full_pre_code_dir
     COP_PRE_CODE_DIR = args.cop_pre_code_dir
     GT_IMAGE_DIR = args.gt_image_dir
     DEDUP_CSV = args.dedup_csv
@@ -160,6 +167,8 @@ def apply_args(args):
 
     GT_SINGLE_STEP_DIR = args.gt_single_step_dir
     OP_ORIENT_DIR = args.op_orient_dir
+    GT_SINGLE_PC_DIR = args.gt_single_pc_dir
+    GT_FULL_PC_DIR = args.gt_full_pc_dir
 
     K = args.k
     DEVICE = args.device
@@ -410,6 +419,30 @@ def _pick_single_step_path(group_dir: str, indices: List[int]) -> Optional[str]:
             return p
     return None
 
+
+def _pick_single_pc_path(group_dir: str, indices: List[int]) -> Optional[str]:
+    """
+    在 <group_dir> 下，为“单步（isolated）形状”挑选 .npy 路径。
+    优先尝试与 step 目录同名的目录内文件，其次尝试把目录本身视为 .npy 文件名。
+    """
+    if not os.path.isdir(group_dir) or not indices:
+        return None
+
+    candidates = []
+    combos = [f"step{c}" for c in _combo_names_from_indices(indices)]
+    for name in combos:
+        candidates.extend([
+            os.path.join(group_dir, name, "3D.npy"),
+            os.path.join(group_dir, name, "pointcloud.npy"),
+            os.path.join(group_dir, name, "pc.npy"),
+            os.path.join(group_dir, f"{name}.npy"),
+        ])
+
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
 def _pick_full_step_path(op_orient_group_dir: str, expected_indices: List[int]) -> Optional[str]:
     """
     在 /data/.../op_orientated_step/<group>/ 下，按多种约定尝试找到“整体形状”的 step：
@@ -437,6 +470,39 @@ def _pick_full_step_path(op_orient_group_dir: str, expected_indices: List[int]) 
                 os.path.join(op_orient_group_dir, c, last, "next_model.step"),
                 os.path.join(op_orient_group_dir, last, "next_model.step"),
                 os.path.join(op_orient_group_dir, last, "3D.step"),
+            ]
+
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+def _pick_full_pc_path(op_orient_group_dir: str, expected_indices: List[int]) -> Optional[str]:
+    """
+    在累计形状目录下查找 .npy，命名规则与 _pick_full_step_path 保持一致。
+    """
+    if not os.path.isdir(op_orient_group_dir):
+        return None
+    combos = _combo_names_from_indices(expected_indices)
+
+    candidates = []
+    for c in combos:
+        last = c.split("_")[-1].split("-")[-1].split(",")[-1] if c else None
+        candidates += [
+            os.path.join(op_orient_group_dir, c, "next_model.npy"),
+            os.path.join(op_orient_group_dir, c, "3D.npy"),
+            os.path.join(op_orient_group_dir, c, "pointcloud.npy"),
+            os.path.join(op_orient_group_dir, c, "pc.npy"),
+            os.path.join(op_orient_group_dir, f"{c}.npy"),
+        ]
+        if last:
+            candidates += [
+                os.path.join(op_orient_group_dir, c, last, "next_model.npy"),
+                os.path.join(op_orient_group_dir, c, last, "3D.npy"),
+                os.path.join(op_orient_group_dir, last, "next_model.npy"),
+                os.path.join(op_orient_group_dir, last, "3D.npy"),
+                os.path.join(op_orient_group_dir, f"{last}.npy"),
             ]
 
     for p in candidates:
@@ -540,82 +606,6 @@ def _extract_group_and_step(pid: str) -> Tuple[str, str]:
     step  = parts[-1]  # 'step1'
     return group, step
 
-def _load_prompts_map():
-    """返回 {pid: {prompt_text:..., op:..., prev_code_path:...}}"""
-    dfp = pd.read_csv(PROMPTS_CSV)
-    dfp.columns = [c.lower() for c in dfp.columns]
-    need = {"group_index", "prompt_text", "op"}
-    if not need.issubset(dfp.columns):
-        raise KeyError(f"prompts.csv 需要列：{need}")
-    # 防空&去重
-    dfp = dfp.dropna(subset=["group_index"]).copy()
-    dfp["group_index"] = dfp["group_index"].astype(str).str.strip()
-    dfp = dfp.drop_duplicates(subset=["group_index"], keep="last")
-    return dfp.set_index("group_index").to_dict(orient="index")
-
-
-def _pick_step_folder(group_dir: str, step: str, expected_indices: List[int]) -> Optional[str]:
-    """
-    选择与 step 对应的目录:
-      - 兼容两种命名： 'stepN' 以及 'stepN_i_j_k'
-      - 优先匹配：目录名中的数字集合 == expected_indices
-      - 次之：数字集合 ⊇ expected_indices（超集）
-      - 仍无：若存在精确 'stepN' 目录则选之
-      - 最后：任取最短集合、字母序稳定的一个
-    """
-    if not os.path.isdir(group_dir):
-        print(f"[WARN] group dir not found: {group_dir}")
-        return None
-
-    expected = set(expected_indices or [])
-    cand_dirs = []
-    step_prefix = step  # e.g. 'step0'
-
-    for name in os.listdir(group_dir):
-        full = os.path.join(group_dir, name)
-        if not os.path.isdir(full):
-            continue
-        if not (name == step_prefix or name.startswith(step_prefix + "_")):
-            continue
-        step_file = os.path.join(full, "3D.step")
-        if not os.path.exists(step_file):
-            continue
-
-        # 目录名等于 'stepN'（无后缀）时，作为一个候选：
-        #   为了参与“完全相等匹配”，我们把它的数字集合当作 expected（如果 expected 非空），
-        #   否则当作空集处理。
-        if name == step_prefix:
-            nums_set = expected if expected else set()
-        else:
-            nums_set = set(_numbers_in_folder_suffix(name, step_prefix))
-
-        cand_dirs.append((name, nums_set, full))
-
-    if not cand_dirs:
-        return None
-
-    # 1) 完全相等
-    exact = [c for c in cand_dirs if c[1] == expected]
-    if exact:
-        exact.sort(key=lambda x: (len(x[1]), x[0]))
-        return exact[0][2]
-
-    # 2) 最小超集
-    supersets = [c for c in cand_dirs if expected and expected.issubset(c[1])]
-    if supersets:
-        supersets.sort(key=lambda x: (len(x[1]), x[0]))
-        return supersets[0][2]
-
-    # 3) 若存在精确 'stepN' 目录（即 name==stepN），作为兜底
-    step_only = [c for c in cand_dirs if c[0] == step_prefix]
-    if step_only:
-        step_only.sort(key=lambda x: x[0])
-        return step_only[0][2]
-
-    # 4) 最终兜底：取集合最短、字母序最小
-    cand_dirs.sort(key=lambda x: (len(x[1]), x[0]))
-    return cand_dirs[0][2]
-
 
 def load_dedup_map() -> dict:
     """读取去重映射表：返回 {group_index: canonical_group_index}"""
@@ -641,13 +631,13 @@ def load_dedup_map() -> dict:
     return _dedup_map
 
 
-def resolve_gt_paths(pid: str, GT_IMAGE_DIR: str, GT_SINGLE_STEP_DIR: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def resolve_gt_paths(pid: str, GT_SINGLE_STEP_DIR: str) -> Tuple[Optional[str], Optional[str]]:
    
     assert OP_ORIENT_DIR, "OP_ORIENT_DIR not set. Call apply_args() first."
     """
-    返回: (gt_img_path, gt_single_step_path, gt_full_step_path)
-    - single: 原本的“该步的 isolated 形状”（GT_SINGLE_STEP_DIR）
-    - full  : “累计到该步的整体形状”（OP_ORIENT_DIR），按多种目录约定自动匹配
+    返回: (gt_single_path, gt_full_path)
+    - single: 优先使用 GT_SINGLE_PC_DIR 下的 .npy，否则回退 GT_SINGLE_STEP_DIR 下的 STEP
+    - full  : 优先使用 GT_FULL_PC_DIR 下的 .npy，否则回退 OP_ORIENT_DIR 下的 STEP
     """
     dedup = load_dedup_map()
 
@@ -664,60 +654,43 @@ def resolve_gt_paths(pid: str, GT_IMAGE_DIR: str, GT_SINGLE_STEP_DIR: str) -> Tu
     # ========= 单步（原有逻辑） =========
     group_dir = os.path.join(GT_SINGLE_STEP_DIR, base_used.replace("/", os.sep))
     gi_path   = os.path.join(group_dir, "group_info.txt")
-    gt_img    = os.path.join(GT_IMAGE_DIR, f"{base_used}/{step}", "3D_isometric.png")
 
     m = _parse_group_info_txt(gi_path)
     expected = m.get(step, [])
-    gt_single = _pick_single_step_path(group_dir, expected)
+    gt_single = None
+    if GT_SINGLE_PC_DIR:
+        pc_group_dir = os.path.join(GT_SINGLE_PC_DIR, base_used.replace("/", os.sep))
+        gt_single = _pick_single_pc_path(pc_group_dir, expected)
+        if gt_single is None:
+            print(f"[WARN] single-step npy not found under {pc_group_dir} for indices={expected}")
+    if gt_single is None:
+        gt_single = _pick_single_step_path(group_dir, expected)
 
     if gt_single and not os.path.exists(gt_single):
-        print(f"[WARN] expected 3D.step not found: {gt_single}")
+        print(f"[WARN] expected GT 3D file not found: {gt_single}")
         gt_single = None
-    #TODO：需要根据去重后的 base_used 重定向 gt_img 路径
-    # if not os.path.exists(gt_img):
-    #     print(f"[WARN] gt image missing: {gt_img}")
-    #     gt_img = None
     # ========= 整体（新增逻辑） =========
-    op_orient_group_dir = os.path.join(OP_ORIENT_DIR, base_used.replace("/", os.sep))
-    gt_full = _pick_full_step_path(op_orient_group_dir, expected)
+    gt_full = None
+    if GT_FULL_PC_DIR:
+        full_pc_group_dir = os.path.join(GT_FULL_PC_DIR, base_used.replace("/", os.sep))
+        gt_full = _pick_full_pc_path(full_pc_group_dir, expected)
+        if gt_full is None:
+            print(f"[WARN] full-step npy not found under {full_pc_group_dir} for indices={expected}")
+    if gt_full is None:
+        op_orient_group_dir = os.path.join(OP_ORIENT_DIR, base_used.replace("/", os.sep))
+        gt_full = _pick_full_step_path(op_orient_group_dir, expected)
 
     if gt_full is None:
         # 兜底打印方便排查
-        print(f"[WARN] full-step not found under {op_orient_group_dir} for indices={expected}")
+        print(f"[WARN] full-step 3D GT not found for {base_used}/{step}, indices={expected}")
 
-    return gt_img, gt_single, gt_full
+    return gt_single, gt_full
 
 #==================== DINO 初始化 =====================
 
 def ensure_dir(d):
     if d and not os.path.exists(d):
         os.makedirs(d, exist_ok=True)
-# _dino_model = None
-# _transform = transforms.Compose([
-#     transforms.Resize(IMAGE_SIZE, interpolation=transforms.InterpolationMode.BICUBIC),
-#     transforms.CenterCrop(IMAGE_SIZE),
-#     transforms.ToTensor(),
-#     transforms.Normalize(mean=(0.485,0.456,0.406), std=(0.229,0.224,0.225))
-# ])
-
-# def ensure_dino(device="cuda"):
-#     global _dino_model
-#     if _dino_model is None:
-#         _dino_model = Dinov2Model.from_pretrained(DINO_MODEL_ID)
-#         _dino_model.eval().to(device)
-#     return _dino_model
-
-# @torch.no_grad()
-# def dino_cosine(img_path_a, img_path_b, device="cuda"):
-#     model = ensure_dino(device)
-#     img_a = Image.open(img_path_a).convert("RGB")
-#     img_b = Image.open(img_path_b).convert("RGB")
-#     ta = _transform(img_a).unsqueeze(0).to(device)
-#     tb = _transform(img_b).unsqueeze(0).to(device)
-#     fa = model(pixel_values=ta).last_hidden_state[:,0,:]
-#     fb = model(pixel_values=tb).last_hidden_state[:,0,:]
-#     fa = F.normalize(fa, dim=1); fb = F.normalize(fb, dim=1)
-#     return float(F.cosine_similarity(fa, fb).item())
 
 def _load_prev_code_from_dir(group_index: str, base_dir: str) -> str:
     """
@@ -874,121 +847,6 @@ _OP_HEADER_LEGACY = re.compile(r"^\s*#\s*chamfer/fillet\s*$", re.IGNORECASE)
 _ASSIGN_EDGES = re.compile(r"^\s*(?P<lhs>\w+)\s*=\s*(?P<rhs>.+?\.edges\s*\(.*\))\s*$", re.IGNORECASE)
 _APPLY_LINE   = re.compile(r".*?\b(?P<var>\w+)\.(?P<op>fillet|chamfer)\s*\((?P<args>[^)]*)\)\s*$", re.IGNORECASE)
 
-def _parse_modify_blocks(gen_code: str):
-    """
-    返回 list[ { 'select_lines': [...], 'apply_line': '...', 'kind': 'fillet|chamfer' } ]
-    基于约定的输出格式：
-      #edges select
-      <one or more selection lines>
-      #operation [fillet|chamfer]   # 新格式（可省略类型）
-      <one operation line>
-    兼容旧格式：
-      #edges select
-      ...
-      #chamfer/fillet
-      ...
-    """
-    blocks = []
-    lines = gen_code.splitlines()
-    i, n = 0, len(lines)
-    while i < n:
-        if _EDGES_HEADER.match(lines[i] or ""):
-            i += 1
-            select_lines = []
-            # 收集 selection 段，直到遇到 operation 标头（新/旧任一）
-            while i < n and not (_OP_HEADER.match(lines[i] or "") or _OP_HEADER_LEGACY.match(lines[i] or "")):
-                if lines[i].strip():
-                    select_lines.append(lines[i])
-                i += 1
-
-            # 读取 operation 标头（新优先）
-            hdr_m = None
-            if i < n:
-                hdr_m = _OP_HEADER.match(lines[i] or "") or _OP_HEADER_LEGACY.match(lines[i] or "")
-                if hdr_m:
-                    i += 1
-
-            # 下一行应为 apply（取第一行非空）
-            apply_line = ""
-            while i < n:
-                L = lines[i].strip()
-                if not L:
-                    i += 1
-                    continue
-                apply_line = lines[i]
-                i += 1
-                break
-
-            # 决定 kind：先看 operation 标头是否携带类型，再从 apply 行回退推断
-            kind = None
-            if hdr_m and hdr_m.re is _OP_HEADER:
-                try:
-                    kind = hdr_m.group("kind")
-                except IndexError:
-                    kind = None
-            if not kind:
-                m = _APPLY_LINE.match(apply_line or "")
-                if m:
-                    kind = m.group("op").lower()
-
-            if select_lines and kind in ("fillet", "chamfer"):
-                blocks.append({"select_lines": select_lines, "apply_line": apply_line, "kind": kind})
-        else:
-            i += 1
-    return blocks
-
-# def _eval_pred_edges_from_blocks(prev_code: str, gen_code: str):
-#     """
-#     执行 prev_code + 每个 selection RHS，得到 predicted 边集合（按 kind 分桶）。
-#     不执行 fillet/chamfer，只 eval 边选择表达式。
-#     """
-#     fillet_pred, chamfer_pred = [], []
-#     # 准备执行环境
-#     glb = {"cq": cq, "np": np}
-#     loc = {}
-#     # 先执行 previous_code（已有 result_*）
-#     try:
-#         exec(prev_code, glb, loc)
-#     except Exception as e:
-#         return fillet_pred, chamfer_pred, f"prev_exec_error:{e}"
-#     blocks = _parse_modify_blocks(gen_code)
-#     # 逐块处理
-#     for b in blocks:
-#         # 逐行执行 selection 之前的赋值以定义变量（但只 eval RHS）
-#         for line in b["select_lines"]:
-#             m = _ASSIGN_EDGES.match(line.strip())
-#             if not m:
-#                 # 允许一些准备行（若有），直接 exec
-#                 try:
-#                     exec(line, glb, loc)
-#                 except Exception:
-#                     pass
-#                 continue
-#             lhs, rhs = m.group("lhs"), m.group("rhs")
-#             try:
-#                 sel = eval(rhs, glb, loc)   # result_x.edges(...)
-#                 vals = list(sel.vals())
-#                 # 把 Edge 转 dict
-#                 vec = []
-#                 for i, e in enumerate(vals):
-#                     try:
-#                         center = e.Center(); length = e.Length(); g = e.geomType()
-#                         verts = [(float(v.X), float(v.Y), float(v.Z)) for v in e.Vertices()]
-#                         vec.append({"edge_index": i, "length": float(length),
-#                                     "center": (float(center.x), float(center.y), float(center.z)),
-#                                     "geomType": g, "vertices": verts})
-#                     except Exception:
-#                         continue
-#                 if b["kind"] == "fillet":
-#                     fillet_pred.extend(vec)
-#                 else:
-#                     chamfer_pred.extend(vec)
-#                 # 也把选择结果放到上下文，以防后续代码引用
-#                 loc[lhs] = sel
-#             except Exception:
-#                 continue
-#     return fillet_pred, chamfer_pred, ""
-
 def _eval_pred_edges_from_blocks(prev_code: str, gen_code: str):
     """
     新版本：
@@ -1070,12 +928,146 @@ def _eval_pred_edges_from_blocks(prev_code: str, gen_code: str):
     return fillet_pred, chamfer_pred, ""
 
 # ===================== 执行/几何有效性 =====================
+_SUBPROCESS_JSON_MARKER = "__FLOWCAD_JSON__="
+_SAFE_EXEC_TIMEOUT_SEC = 120
+_SAFE_METRIC_TIMEOUT_SEC = 180
+
+
+def _format_subprocess_failure(returncode: int, stderr: str = "") -> str:
+    if returncode < 0:
+        sig_num = -returncode
+        try:
+            sig_name = signal.Signals(sig_num).name
+        except Exception:
+            sig_name = f"SIG{sig_num}"
+        return f"subprocess_terminated_by_signal:{sig_name}"
+    detail = f"subprocess_exit_code:{returncode}"
+    stderr = (stderr or "").strip()
+    if stderr:
+        detail += f"; stderr={stderr}"
+    return detail
+
+
+def _extract_subprocess_json(stdout: str):
+    for line in reversed((stdout or "").splitlines()):
+        if line.startswith(_SUBPROCESS_JSON_MARKER):
+            payload = line[len(_SUBPROCESS_JSON_MARKER):]
+            return json.loads(payload)
+    raise ValueError("missing subprocess json payload")
+
+
+def _run_isolated_python(payload: dict, timeout: int):
+    runner = r"""
+import json
+import sys
+import traceback
+
+MARKER = "__FLOWCAD_JSON__="
+
+def emit(obj):
+    print(MARKER + json.dumps(obj, ensure_ascii=False))
+
+def run_exec(data):
+    import cadquery as cq
+    import numpy as np
+
+    py_path = data["py_path"]
+    glb = {"cq": cq, "np": np}
+    with open(py_path, "r", encoding="utf-8") as f:
+        src = f.read()
+    exec(compile(src, py_path, "exec"), glb, glb)
+    emit({"ok": True, "err": ""})
+
+def run_metric(data):
+    from reward.utils.compute_3D import get_cd_hd
+
+    kwargs = {
+        "pred_step_path": data["pred_step_path"],
+        "gt_step_path": data["gt_step_path"],
+    }
+    if data.get("num_points") is not None:
+        kwargs["num_points"] = data["num_points"]
+    if data.get("angles") is not None:
+        kwargs["angles"] = data["angles"]
+
+    res = get_cd_hd(**kwargs)
+    emit(
+        {
+            "ok": bool(getattr(res, "ok", False)),
+            "reason": getattr(res, "reason", ""),
+            "cd": getattr(res, "cd", None),
+            "hd": getattr(res, "hd", None),
+            "best_euler_angle": getattr(res, "best_euler_angle", None),
+        }
+    )
+
+def main():
+    try:
+        payload = json.loads(sys.argv[1])
+        mode = payload["mode"]
+        if mode == "exec":
+            run_exec(payload)
+        elif mode == "metric":
+            run_metric(payload)
+        else:
+            emit({"ok": False, "err": f"unknown_mode:{mode}"})
+            sys.exit(2)
+    except Exception as exc:
+        emit(
+            {
+                "ok": False,
+                "err": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+            }
+        )
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+"""
+    return subprocess.run(
+        [sys.executable, "-c", runner, json.dumps(payload, ensure_ascii=False)],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=os.getcwd(),
+    )
+
+
 def safe_exec_from_path(py_path: str, globals_dict=None):
     """执行保存到磁盘的 Python/CadQuery 脚本；返回 (ok, locals, err)。"""
     glb = {"cq": cq, "np": np}
     if globals_dict:
         glb.update(globals_dict)
     loc = {}
+    if globals_dict is None:
+        try:
+            proc = _run_isolated_python({"mode": "exec", "py_path": py_path}, timeout=_SAFE_EXEC_TIMEOUT_SEC)
+        except subprocess.TimeoutExpired:
+            return False, {}, f"TimeoutExpired: execution exceeded {_SAFE_EXEC_TIMEOUT_SEC}s"
+        except Exception as e:
+            return False, {}, f"isolation_error:{type(e).__name__}: {e}"
+
+        if proc.returncode == 0:
+            try:
+                payload = _extract_subprocess_json(proc.stdout)
+                return bool(payload.get("ok", False)), {}, payload.get("err", "")
+            except Exception as e:
+                err = _format_subprocess_failure(proc.returncode, proc.stderr)
+                return False, {}, f"bad_subprocess_output:{type(e).__name__}: {e}; {err}"
+
+        try:
+            payload = _extract_subprocess_json(proc.stdout)
+            err = payload.get("err", "")
+            tb = payload.get("traceback", "")
+            detail = _format_subprocess_failure(proc.returncode, proc.stderr)
+            msg = err or detail
+            if tb:
+                msg = f"{msg}\n{tb}"
+            return False, {}, msg
+        except Exception:
+            return False, {}, _format_subprocess_failure(proc.returncode, proc.stderr)
+
     try:
         with open(py_path, "r", encoding="utf-8") as f:
             src = f.read()
@@ -1164,25 +1156,64 @@ def _compute_summary(rows: List[dict], pid: str, op_kind: str) -> dict:
     }
 
 def _safe_get_cd_hd(pred_step_path, gt_step_path, *, num_points=None, angles=None):
-    """包装 get_cd_hd，任何异常都转成 MetricsResult(ok=False, reason=...)；支持固定角度。"""
-    from utils.compute_3D import get_cd_hd, MetricsResult
+    """包装 get_cd_hd，GT 可为 STEP 或 NPY；任何异常都转成 MetricsResult。"""
+    from utils.compute_3D import MetricsResult
     try:
-        if angles is None:
-            return get_cd_hd(pred_step_path=pred_step_path, gt_step_path=gt_step_path)
-        else:
-            return get_cd_hd(pred_step_path=pred_step_path, gt_step_path=gt_step_path, angles=angles)
+        payload = {
+            "mode": "metric",
+            "pred_step_path": pred_step_path,
+            "gt_step_path": gt_step_path,
+            "num_points": num_points,
+            "angles": angles,
+        }
+        proc = _run_isolated_python(payload, timeout=_SAFE_METRIC_TIMEOUT_SEC)
+        if proc.returncode != 0:
+            try:
+                data = _extract_subprocess_json(proc.stdout)
+                reason = data.get("err", "") or _format_subprocess_failure(proc.returncode, proc.stderr)
+                return MetricsResult(None, None, None, ok=False, reason=reason)
+            except Exception:
+                return MetricsResult(
+                    None,
+                    None,
+                    None,
+                    ok=False,
+                    reason=_format_subprocess_failure(proc.returncode, proc.stderr),
+                )
+        data = _extract_subprocess_json(proc.stdout)
+        if not data.get("ok", False):
+            return MetricsResult(
+                None,
+                None,
+                None,
+                ok=False,
+                reason=data.get("reason") or data.get("err", "metric_failed"),
+            )
+
+        best_angles = data.get("best_euler_angle")
+        if isinstance(best_angles, list):
+            best_angles = tuple(best_angles)
+        return MetricsResult(
+            data.get("cd"),
+            data.get("hd"),
+            best_angles,
+            ok=True,
+            reason=data.get("reason", ""),
+        )
+    except subprocess.TimeoutExpired:
+        return MetricsResult(None, None, None, ok=False, reason=f"metric_timeout:{_SAFE_METRIC_TIMEOUT_SEC}s")
     except Exception as e:
         reason = f"metric_exception:{type(e).__name__}:{e}"
         return MetricsResult(None, None, None, ok=False, reason=reason)
 
 
-def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
+def process_one(r, K, COP, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     """处理单个样本，返回 (per_cand_rows, summary_rows, pid)。per_cand_rows 含 single/full 两类，用 kind 区分。"""
     pid = str(r["group_index"])
     import re, os
     from utils.compute_3D import get_cd_hd, MetricsResult
     from model_call.call_model import get_model_candidates
-    from model_call.prompt import build_incremental_cq_prompt_infer, build_incremental_cq_prompt
+    from model_call.prompt import build_incremental_cq_prompt
     from utils.post_code_process import build_iso_code, build_integrated_code
 
     # -------- 基本信息 --------
@@ -1190,10 +1221,11 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     step_num = int(m.group(1)) if m else -1
     first_step = (step_num == 0)
 
-    gt_img, gt_single_step, gt_full_step = resolve_gt_paths(pid, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR)
+    gt_single_step, gt_full_step = resolve_gt_paths(pid, GT_SINGLE_STEP_DIR)
 
     # 前序代码
     prev_code = _load_prev_code_from_dir(pid, COP_PRE_CODE_DIR if COP else PRE_CODE_DIR)
+    full_pre_code = _load_prev_code_from_dir(pid, FULL_PRE_CODE_DIR)
     prev_path = r.get("prev_code_path", None)
     if isinstance(prev_path, str) and os.path.exists(prev_path):
         try:
@@ -1204,39 +1236,17 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     # Prompt & 候选代码
     op_kind = str(r.get("op", "")).lower()
 
-    # # === NEW: few-shot 示例（按当前 pid 分类在 one_shot.csv 中挑一条）===
-    # few_shot = None
-    # try:
-    #     pmap_all = _load_prompts_map()   # 你已有的函数
-    #     few = _build_few_shot_for_pid(pid, pmap_all, COP)
-    #     if few:
-    #         few_shot = [few]             # 目前只放1条；后续可扩展为多条
-    # except Exception as e:
-    #     few_shot = None
-    #     print(f"[ONESHOT] build few-shot failed for {pid}: {e}")
-
     prompt = build_incremental_cq_prompt(
         previous_code=prev_code,
         operation_instruction=r["prompt_text"],
         link_mode=None,
         images=None,
         image_prompt=None,
+        current_var_name=f"result{step_num-1} " if not first_step else None,
         next_var_name="result",
         allow_comments=False,
         op_kind=op_kind
     )
-    # prompt = build_incremental_cq_prompt_infer(
-    #     previous_code=prev_code,
-    #     operation_instruction=r["prompt_text"],
-    #     link_mode=None,
-    #     images=None,
-    #     image_prompt=None,
-    #     next_var_name="result",
-    #     allow_comments=False,
-    #     add_size_guidelines=True,
-    #     op_kind=op_kind,
-    #     few_shots=few_shot,              # <<< NEW
-    # )
 
     # print(prompt)
     # print(f"[INFO] Prompt for {pid} length (chars): {len(prompt)}") # 打印长度
@@ -1397,7 +1407,7 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
 
         # 生成代码
         single_code, info_shape = build_iso_code(prev_code, code, single_step_path,first_step=first_step)   # info_shape['lhs'] 可用
-        integrated_code, final_lhs = build_integrated_code(prev_code, code, full_step_path, first_step=first_step)
+        integrated_code, final_lhs = build_integrated_code(full_pre_code, code, full_step_path, first_step=first_step)
 
         # 落盘
         with open(single_py, "w", encoding="utf-8") as f:
@@ -1481,18 +1491,6 @@ def process_one(r, K, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     summary_rows = [summary_row] if WRITE_SUMMARY else []
     return per_cand_rows, summary_rows, pid
 
-def _repair_worker(args):
-    """并行子进程执行：返回 (per_cand_rows, summary_rows, pid)"""
-    fake_row, Kfix, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR = args
-    return process_one(
-        fake_row,
-        K=Kfix,
-        COP=COP,
-        GT_IMAGE_DIR=GT_IMAGE_DIR,
-        GT_SINGLE_STEP_DIR=GT_SINGLE_STEP_DIR,
-        GT_EDGES_DIR=GT_EDGES_DIR,
-    )
-
 # ======= 新增：安全原子写 =======
 import tempfile, shutil, os, pandas as pd
 
@@ -1520,164 +1518,6 @@ def _write_csv_atomic(df: pd.DataFrame, path: str):
             except Exception:
                 pass
 
-
-def main_repair_parallel():
-    """
-    实时写盘的 repair 模式：
-    - 每完成一个 pid，就把该 pid 的 per_cand_rows 合并到 cands.csv（覆盖相同 group_index,k_index）
-    - 同时重算该 pid 的 summary 并写回 summary.csv（覆盖该 pid 的 summary 行）
-    - 采用原子写盘，避免中途中断导致损坏
-    """
-    global args
-    from tqdm import tqdm
-
-    os.makedirs(OUT_DIR, exist_ok=True); ensure_dir(TMP_DIR)
-    cand_out_path = os.path.join(OUT_DIR, "cands.csv")
-    summary_out_path = os.path.join(OUT_DIR, "summary.csv")
-
-    # 读 prompts 映射（用于获取 op）
-    pmap = _load_prompts_map()
-
-    # 读 repair.csv：需要 group_index；可选 k_index、prev_code_path
-    dfr = pd.read_csv(args.repair_csv)
-    dfr.columns = [c.lower() for c in dfr.columns]
-    if "group_index" not in dfr.columns:
-        raise KeyError("repair-csv 需要列：group_index（可选：k_index, prev_code_path）")
-    dfr = dfr.dropna(subset=["group_index"]).copy()
-    dfr["group_index"] = dfr["group_index"].astype(str).str.strip()
-    if "k_index" in dfr.columns:
-        dfr["k_index"] = pd.to_numeric(dfr["k_index"], errors="coerce").astype("Int64")
-    else:
-        dfr["k_index"] = pd.Series([0]*len(dfr), dtype="Int64")
-
-    # 组织任务：一个 pid -> 修哪些槽，Kfix
-    to_fix = {}
-    extra_prev = {}
-    for _, r in dfr.iterrows():
-        pid = r["group_index"]
-        if pid not in pmap:
-            print(f"[WARN] {pid} 不在 prompts.csv，跳过")
-            continue
-        kslot = int(r["k_index"]) if pd.notna(r["k_index"]) else 0
-        to_fix.setdefault(pid, set())
-        if kslot in (0, 1):
-            to_fix[pid].add(kslot)
-        if "prev_code_path" in dfr.columns and pd.notna(r.get("prev_code_path", None)):
-            extra_prev[pid] = str(r["prev_code_path"]).strip()
-
-    # 预载现有 CSV（若存在）
-    if os.path.exists(cand_out_path):
-        cands = pd.read_csv(cand_out_path)
-        cands["group_index"] = cands["group_index"].astype(str)
-        cands["k_index"] = pd.to_numeric(cands["k_index"], errors="coerce").astype("Int64")
-    else:
-        cands = pd.DataFrame()
-
-    if WRITE_SUMMARY and os.path.exists(summary_out_path):
-        sums = pd.read_csv(summary_out_path)
-        sums["group_index"] = sums["group_index"].astype(str)
-    else:
-        sums = pd.DataFrame()
-
-    # 生成任务包
-    tasks = []
-    slot_map = {}  # pid -> (slots, Kfix, base_task)
-    for pid, slots in to_fix.items():
-        meta = pmap[pid]
-        base_task = {
-            "group_index": pid,
-            "prompt_text": meta["prompt_text"],
-            "op": meta.get("op", ""),
-            "prev_code_path": extra_prev.get(pid, None),
-        }
-        if {0,1}.issubset(slots) or slots == {0,1}:
-            Kfix = 2
-        else:
-            Kfix = 1
-        tasks.append((pid, slots, base_task, Kfix))
-        slot_map[pid] = (slots, Kfix, base_task)
-
-    # 并行执行 + 实时落盘
-    job_args = []
-    for pid, slots, base_task, Kfix in tasks:
-        fake_row = {
-            "group_index": pid,
-            "prompt_text": base_task["prompt_text"],
-            "op": base_task["op"],
-            "prev_code_path": base_task["prev_code_path"],
-        }
-        job_args.append((fake_row, Kfix, COP, GT_IMAGE_DIR, GT_SINGLE_STEP_DIR, GT_EDGES_DIR))
-
-    print("[Repair] 实时记录模式启动...")
-    with mp.Pool(processes=NPROC,maxtasksperchild=10) as pool:
-        for per_cand_rows, _, pid in tqdm(
-            pool.imap_unordered(_repair_worker, job_args, chunksize=1),
-            total=len(job_args), desc="[Repair-Streaming]", ncols=100
-        ):
-            slots, Kfix, base_task = slot_map[pid]
-
-            if not per_cand_rows:
-                print(f"[WARN] {pid} 无生成结果，跳过", flush=True)
-                continue
-
-            # 规范 k_index（覆盖到需要的槽）
-            if Kfix == 2:
-                per_cand_rows = per_cand_rows[:2]
-                for i, r in enumerate(per_cand_rows):
-                    r["k_index"] = i  # 0,1
-            else:
-                # 只修一个槽
-                kslot = list(slots)[0]
-                for r in per_cand_rows:
-                    r["k_index"] = kslot
-
-            new_df = pd.DataFrame(per_cand_rows)
-            new_df["group_index"] = new_df["group_index"].astype(str)
-            new_df["k_index"] = pd.to_numeric(new_df["k_index"], errors="coerce").astype("Int64")
-
-            # —— 合并到 cands（覆盖相同 pid+k）——
-            if not cands.empty:
-                touched = set(zip(new_df["group_index"].astype(str), new_df["k_index"].astype(int)))
-                # 只在 pid 命中时做精确删除，避免全表 apply 慢
-                mask_pid = cands["group_index"].astype(str).isin(new_df["group_index"].unique())
-                if mask_pid.any():
-                    idx_drop = []
-                    for idx, row in cands[mask_pid].iterrows():
-                        key = (str(row["group_index"]), int(row["k_index"]) if pd.notna(row["k_index"]) else -1)
-                        if key in touched:
-                            idx_drop.append(idx)
-                    if idx_drop:
-                        cands = cands.drop(index=idx_drop)
-                cands = pd.concat([cands, new_df], ignore_index=True)
-            else:
-                cands = new_df.copy()
-
-            # —— 立刻写出 cands.csv（原子）——
-            _write_csv_atomic(cands, cand_out_path)
-
-            # —— 重算该 pid 的 summary，并覆盖写回（如开启）——
-            if WRITE_SUMMARY:
-                # 拿最新的该 pid 的 k0/1 行参与 summary
-                rows_pid = cands[
-                    (cands["group_index"] == pid) &
-                    (cands["k_index"].isin([0, 1]))
-                ].to_dict(orient="records")
-
-                op_kind = str(pmap.get(pid, {}).get("op", "geometry")).lower()
-                new_sum = _compute_summary(rows_pid, pid, op_kind)
-
-                if not sums.empty and {"group_index","k_index"}.issubset(sums.columns):
-                    sums = sums[~(
-                        (sums["group_index"].astype(str) == pid) &
-                        (sums["k_index"].astype(str).isin(["summary","summary_best"]))
-                    )]
-                sums = pd.concat([sums, pd.DataFrame([new_sum])], ignore_index=True)
-                _write_csv_atomic(sums, summary_out_path)
-
-            print(f"[✓ 实时写盘] {pid} 已合并到 cands.csv"
-                  + (" 并更新 summary.csv" if WRITE_SUMMARY else ""), flush=True)
-
-    print("[REPAIR] 全部任务完成（实时记录已开启，文件随进度写出）。")
 from tqdm import tqdm 
 def main_parallel():
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -1738,24 +1578,6 @@ def main_parallel():
                 print(f"[WARN] summary.csv missing columns: need group_index,k_index. Will not resume-skip.")
         except Exception as e:
             print(f"[WARN] Failed to load {summary_out_path}, will start fresh. Error: {e}")
-    # 基于 summary 的完成列表，加载 cands.csv
-    # if RESUME and os.path.exists(cand_out_path):
-    #     print(f"[RESUME] Loading existing {cand_out_path} for appending...")
-    #     try:
-    #         old_cands_df = pd.read_csv(cand_out_path)
-            
-    #         if not old_cands_df.empty and not done_group_indexs:
-    #                 print(f"[WARN] {cand_out_path} exists, but no completed tasks found in summary. Will overwrite cands.csv.")
-    #         elif not old_cands_df.empty:
-    #             old_cands_df["group_index"] = old_cands_df["group_index"].astype(str)
-                
-    #             # 关键：只保留那些 "已完成" 任务的 cands
-    #             # 这样，"未完成" (pending) 的任务被重新运行后，旧的 cand (if any) 会被丢弃
-    #             cands_to_keep = old_cands_df[old_cands_df["group_index"].isin(done_group_indexs)]
-    #             all_cand_rows = cands_to_keep.to_dict(orient="records") # <-- 装载旧数据
-    #             print(f"[RESUME] Loaded and kept {len(all_cand_rows)} candidate rows from completed tasks.")
-    #     except Exception as e:
-    #         print(f"[WARN] Failed to load {cand_out_path}, will start fresh. Error: {e}")
 
     # 过滤掉已完成的样本
     pend_rows = [r for _, r in df.iterrows() if str(r["group_index"]) not in done_group_indexs]
@@ -1769,7 +1591,6 @@ def main_parallel():
     # ---- 带进度条 ----
     with mp.Pool(processes=NPROC,maxtasksperchild=10) as pool:
         worker = partial(process_one, K=K, COP=COP,
-                        GT_IMAGE_DIR=GT_IMAGE_DIR,
                         GT_SINGLE_STEP_DIR=GT_SINGLE_STEP_DIR,
                         GT_EDGES_DIR=GT_EDGES_DIR)
         with tqdm(total=n_total, desc="[Progress]", dynamic_ncols=True) as pbar:
@@ -1813,11 +1634,4 @@ if __name__ == "__main__":
     parser = build_arg_parser()
     args = parser.parse_args()
     apply_args(args)
-
-    if getattr(args, "repair_csv", None):
-        main_repair_parallel()   # ← 修正模式
-    else:
-        main_parallel()          # ← 常规评测
-    # group_dir = "/data/baiyixue/CAD/step_files/00002_index_2"  # 例子
-    # print(_pick_single_step_path(group_dir, [0]))       # 期望 step0/3D.step
-    # print(_pick_single_step_path(group_dir, [1,2,3]))   # 期望 step1_2_3/3D.step（或兼容变体）
+    main_parallel()
