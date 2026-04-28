@@ -21,6 +21,17 @@ import argparse
 from datetime import datetime
 _dedup_map = None
 THINKING = True   # === NEW: thinking ===
+VISUAL_MODE = False
+
+
+def _normalize_visual_mask_path(v) -> Optional[str]:
+    p = str(v).strip() if v is not None else ""
+    if not p:
+        return None
+    if os.path.basename(p) != "location.png":
+        return None
+    return p
+
 def build_arg_parser():
     p = argparse.ArgumentParser(
         description="Op-CAD 多进程评测脚本（可指定 test 名/模型名 与 cop/非cop 模式）"
@@ -99,6 +110,8 @@ def build_arg_parser():
                 help="当 provider=vllm 时，指定使用 config.json 中 'vllm.endpoints' 下的哪个 key (默认按 config.json 的 strategy 选)")
     p.add_argument("--thinking", action="store_true", default=False,
                 help="启用 thinking 模式：请求模型返回含思维/轨迹的答案，并在输出目录打标签")
+    p.add_argument("--visual-mode", action="store_true", default=False,
+                help="视觉模式：从 prompt.csv 的 image_mask 读取高亮 location.png，并作为模型图像输入")
     
     # === One-shot few-shot 开关 ===
     p.add_argument("--oneshot", action="store_true", default=False,
@@ -119,13 +132,14 @@ def apply_args(args):
     global IMAGE_SIZE, FIVECROP, COP, SAVE_STEP, SAVE_RENDER, TMP_DIR, RESUME
     global SEED, DINO_MODEL_ID, NPROC, WRITE_EVERY
     global WRITE_SUMMARY
-    global THINKING
+    global THINKING, VISUAL_MODE
     global ONESHOT_ON, ONESHOT_CSV, META_CSV, BOOL_CSV
 
     ONESHOT_ON  = bool(getattr(args, "oneshot", False))
     ONESHOT_CSV = getattr(args, "oneshot_csv", None)
     META_CSV    = getattr(args, "meta_csv", None)
     BOOL_CSV    = getattr(args, "bool_csv", None)
+    VISUAL_MODE = bool(getattr(args, "visual_mode", False))
 
     # ===== 运行标识 & 目录结构 =====
     # 目录：<out-root>/<test-name>__<mode>/（附加时间戳避免覆盖，可按需去掉）
@@ -193,6 +207,8 @@ def apply_args(args):
     print(f"[RUN] test={args.test_name}  mode={args.mode}"
          f"  thinking={THINKING}  out_dir={OUT_DIR}")
     print(f"[RUN] prompts={PROMPTS_CSV}  nproc={NPROC}  resume={RESUME}  seed={SEED}")
+    if VISUAL_MODE:
+        print("[RUN] visual-mode=ON (using prompt.csv:image_mask/location.png)")
 
 
 
@@ -1213,7 +1229,7 @@ def process_one(r, K, COP, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     import re, os
     from utils.compute_3D import get_cd_hd, MetricsResult
     from model_call.call_model import get_model_candidates
-    from model_call.prompt import build_incremental_cq_prompt
+    from model_call.prompt import build_incremental_cq_prompt, build_visual_mask_prompt
     from utils.post_code_process import build_iso_code, build_integrated_code
 
     # -------- 基本信息 --------
@@ -1235,13 +1251,14 @@ def process_one(r, K, COP, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
 
     # Prompt & 候选代码
     op_kind = str(r.get("op", "")).lower()
+    visual_image = _normalize_visual_mask_path(r.get("image_mask")) if VISUAL_MODE else None
 
     prompt = build_incremental_cq_prompt(
         previous_code=prev_code,
         operation_instruction=r["prompt_text"],
         link_mode=None,
-        images=None,
-        image_prompt=None,
+        images=[{"path": visual_image, "caption": "Highlighted operation mask"}] if visual_image else None,
+        image_prompt=build_visual_mask_prompt() if visual_image else None,
         current_var_name=f"result{step_num-1} " if not first_step else None,
         next_var_name="result",
         allow_comments=False,
@@ -1250,7 +1267,12 @@ def process_one(r, K, COP, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
 
     # print(prompt)
     # print(f"[INFO] Prompt for {pid} length (chars): {len(prompt)}") # 打印长度
-    cands = get_model_candidates(prompt, K, thinking=THINKING)
+    cands = get_model_candidates(
+        prompt,
+        K,
+        thinking=THINKING,
+        image_paths=[visual_image] if visual_image else None,
+    )
 
     # 结果收集
     per_cand_rows: List[dict] = []
@@ -1532,6 +1554,13 @@ def main_parallel():
     miss = required - set(df.columns)
     if miss:
         raise KeyError(f"prompts.csv 缺少列: {miss}")
+    if VISUAL_MODE:
+        if "image_mask" not in df.columns:
+            raise KeyError("visual-mode 需要 prompts.csv 包含 image_mask 列")
+        n0 = len(df)
+        df["image_mask"] = df["image_mask"].apply(_normalize_visual_mask_path)
+        df = df[df["image_mask"].notna()].copy()
+        print(f"[VISUAL] keep location.png rows: {len(df)}/{n0}")
     
      # ===== 新增：按 split-json 过滤 =====
     if getattr(args, "split_json", None):
