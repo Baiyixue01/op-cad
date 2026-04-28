@@ -2,6 +2,17 @@ import re
 from textwrap import dedent
 from typing import List, Optional, Dict, Literal
 
+DEFAULT_VISUAL_MASK_PROMPT = (
+    "One highlighted **mask** image that shows where the operation is applied "
+    "(yellow=added, red=removed, 半透明light purple=previous part)."
+)
+
+
+def build_visual_mask_prompt() -> str:
+    """统一视觉模式下的高亮 mask 提示词。"""
+    return DEFAULT_VISUAL_MASK_PROMPT
+
+
 def _detect_last_result_var(code: str) -> str:
     """从前序代码中自动检测最后一个 result_x 变量名；没有则返回 default。"""
     matches = re.findall(r"\b(result_\d+)\b\s*=", code)

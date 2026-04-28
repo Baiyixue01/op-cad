@@ -1,4 +1,4 @@
-import json, time, random, re, traceback, os
+import json, time, random, re, traceback, os, base64, mimetypes
 from typing import List, Dict, Any
 from .config_loader import load_config
 from typing import Optional
@@ -301,7 +301,20 @@ def _build_openai_client():
     return client, api_key
 
 
-def _gen_via_openai(prompt: str, thinking: bool = False) -> Dict[str, Any]:
+def _build_multimodal_content(prompt: str, image_paths: Optional[List[str]] = None):
+    content = [{"type": "text", "text": prompt}]
+    for p in (image_paths or []):
+        try:
+            with open(p, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+            mime = mimetypes.guess_type(p)[0] or "image/png"
+            content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+        except Exception as e:
+            print(f"[WARN] skip invalid image input '{p}': {e}")
+    return content
+
+
+def _gen_via_openai(prompt: str, thinking: bool = False, image_paths: Optional[List[str]] = None) -> Dict[str, Any]:
     from openai import APIConnectionError, APITimeoutError, RateLimitError, APIError
 
     client, api_key = _build_openai_client()
@@ -316,9 +329,11 @@ def _gen_via_openai(prompt: str, thinking: bool = False) -> Dict[str, Any]:
     last_err = ""
     while tries < RATE_LIMIT_MAX_RETRIES:
         try:
+            has_images = bool(image_paths)
+            user_content = _build_multimodal_content(prompt, image_paths) if has_images else prompt
             rsp = client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": user_content}],
                 temperature=gp["temperature"],
                 top_p=gp["top_p"],                         # OpenAI 支持
                 presence_penalty=gp["presence_penalty"],   # OpenAI 支持
@@ -386,7 +401,7 @@ def _get_tokenizer():
     return _TOK
 
 
-def _gen_via_http(prompt: str, thinking: bool = False) -> Dict[str, Any]:
+def _gen_via_http(prompt: str, thinking: bool = False, image_paths: Optional[List[str]] = None) -> Dict[str, Any]:
     import requests, json
 
     try:
@@ -416,12 +431,14 @@ def _gen_via_http(prompt: str, thinking: bool = False) -> Dict[str, Any]:
         # 删除 None 项，避免某些服务端报错
         sampling = {k: v for k, v in sampling.items() if v is not None}
 
-        if thinking:
+        has_images = bool(image_paths)
+        if thinking or has_images:
             # chat-style
             endpoint = base
+            user_content = _build_multimodal_content(prompt, image_paths) if has_images else prompt
             payload = {
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": user_content}],
                 **sampling,
             }
         else:
@@ -454,7 +471,7 @@ def _gen_via_http(prompt: str, thinking: bool = False) -> Dict[str, Any]:
                 r.raise_for_status()
                 rsp = r.json()
 
-                if thinking:
+                if thinking or has_images:
                     txt = (rsp.get("choices",[{}])[0].get("message",{}).get("content","") or "").strip()
                 else:
                     txt = (rsp.get("choices",[{}])[0].get("text","") or "").strip()
@@ -493,7 +510,7 @@ def _gen_via_http(prompt: str, thinking: bool = False) -> Dict[str, Any]:
 
 
 # ===== 混合兜底：local -> openai -> http =====
-def _try_local_then_api(prompt: str) -> Dict[str, Any]:
+def _try_local_then_api(prompt: str, image_paths: Optional[List[str]] = None) -> Dict[str, Any]:
     # 1) local
     try:
         code = run_local_model(prompt)
@@ -510,7 +527,7 @@ def _try_local_then_api(prompt: str) -> Dict[str, Any]:
 
     # 2) openai
     if CFG["openai"]["enabled"]:
-        ret = _gen_via_openai(prompt)
+        ret = _gen_via_openai(prompt, image_paths=image_paths)
         if ret.get("code"):
             return ret
         else:
@@ -518,7 +535,7 @@ def _try_local_then_api(prompt: str) -> Dict[str, Any]:
 
     # 3) http
     if CFG["http"]["enabled"]:
-        ret = _gen_via_http(prompt)
+        ret = _gen_via_http(prompt, image_paths=image_paths)
         if ret.get("code") or ret.get("err") == "":
             return ret
         else:
@@ -535,7 +552,7 @@ def _try_local_then_api(prompt: str) -> Dict[str, Any]:
     }
 
 
-def get_model_candidates(prompt: str, k: int, *, thinking: bool = False):
+def get_model_candidates(prompt: str, k: int, *, thinking: bool = False, image_paths: Optional[List[str]] = None):
     mode = str(CFG["gen"]["mode"]).lower()
     results: List[Dict[str, Any]] = []
     pid = os.getpid()
@@ -552,13 +569,13 @@ def get_model_candidates(prompt: str, k: int, *, thinking: bool = False):
                 }
             elif mode == "api":
                 if CFG["openai"]["enabled"]:
-                    result = _gen_via_openai(prompt,thinking=thinking)
+                    result = _gen_via_openai(prompt,thinking=thinking, image_paths=image_paths)
                 elif CFG["http"]["enabled"]:
-                    result = _gen_via_http(prompt,thinking=thinking)
+                    result = _gen_via_http(prompt,thinking=thinking, image_paths=image_paths)
                 else:
                     raise RuntimeError("API mode enabled but no API backend selected.")
             else:
-                result = _try_local_then_api(prompt)
+                result = _try_local_then_api(prompt, image_paths=image_paths)
 
             # --- 关键逻辑：429 产生的占位错误，跳过记录，继续获取下一条 ---
             if result.get("err") == "rate_limit_exceeded":

@@ -6,8 +6,16 @@ import pandas as pd
 
 # ====== 引用你现有代码中的函数 ======
 # 确保能 import 到下列函数；若同文件，直接粘贴函数体亦可
-from model_call.prompt import build_incremental_cq_prompt
+from model_call.prompt import build_incremental_cq_prompt, build_visual_mask_prompt
 from evaluation import _load_prev_code_from_dir
+
+
+def _normalize_visual_mask_path(v):
+    p = str(v).strip() if v is not None else ""
+    if not p:
+        return None
+    return p if os.path.basename(p) == "location.png" else None
+
 def main():
     ap = argparse.ArgumentParser(description="构建 SiliconFlow 批量推理 JSONL（从 prompts.csv ）")
     ap.add_argument("--prompts-csv", default = "/home/baiyixue/project/op-cad/data/prompt.csv", help="至少包含 group_index,prompt_text,op")
@@ -23,6 +31,8 @@ def main():
     ap.add_argument("--system", default="You are an expert CadQuery assistant. Return only executable CadQuery code.",
                     help="system 提示词")
     ap.add_argument("--append-custom-suffix", default="", help="给 custom_id 追加后缀标记（可选）")
+    ap.add_argument("--visual-mode", action="store_true", default=False,
+                    help="视觉模式：读取 prompts.csv 的 image_mask，且仅保留 location.png")
     args = ap.parse_args()
 
     df = pd.read_csv(args.prompts_csv)
@@ -30,6 +40,13 @@ def main():
     need = {"group_index","prompt_text","op"}
     if not need.issubset(df.columns):
         raise KeyError(f"prompts.csv 需要列：{need}")
+    if args.visual_mode:
+        if "image_mask" not in df.columns:
+            raise KeyError("visual-mode 需要 prompts.csv 包含 image_mask 列")
+        n0 = len(df)
+        df["image_mask"] = df["image_mask"].apply(_normalize_visual_mask_path)
+        df = df[df["image_mask"].notna()].copy()
+        print(f"[VISUAL] keep location.png rows: {len(df)}/{n0}")
 
     code_dir = args.cop_pre_code_dir if args.mode == "cop" else args.pre_code_dir
     rows = []
@@ -38,6 +55,7 @@ def main():
         pid = str(r["group_index"]).strip()
         op_kind = str(r["op"]).strip()
         instr = str(r["prompt_text"])
+        visual_image = _normalize_visual_mask_path(r.get("image_mask")) if args.visual_mode else None
 
         # 前序代码（允许为空，内部会处理 step0）
         prev_code = _load_prev_code_from_dir(pid, code_dir)
@@ -48,6 +66,8 @@ def main():
             operation_instruction=instr,
             op_kind=op_kind,
             link_mode=None,
+            images=[{"path": visual_image, "caption": "Highlighted operation mask"}] if visual_image else None,
+            image_prompt=build_visual_mask_prompt() if visual_image else None,
             allow_comments=False,
             add_size_guidelines=True,
         )
@@ -58,11 +78,14 @@ def main():
             if args.append_custom_suffix:
                 custom_id = f"{custom_id}-{args.append_custom_suffix}"
 
+            user_content = [{"type": "text", "text": user_prompt}]
+            if visual_image:
+                user_content.append({"type": "image_url", "image_url": {"url": f"file://{visual_image}"}})
             body = {
                 "model": args.model,
                 "messages": [
                     {"role": "system", "content": args.system},
-                    {"role": "user",   "content": user_prompt}
+                    {"role": "user",   "content": user_content if visual_image else user_prompt}
                 ],
                 "stream": bool(args.stream),
                 "max_tokens": args.max_tokens
