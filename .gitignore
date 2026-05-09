@@ -9,4 +9,5 @@ __pycache__/
 *.pyc
 un_necessary_data
 *main*
-*result*
+*result*__pycache__/
+*.pyc
