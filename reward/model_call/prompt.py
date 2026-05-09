@@ -2,9 +2,13 @@ import re
 from textwrap import dedent
 from typing import List, Optional, Dict, Literal
 
+# DEFAULT_VISUAL_MASK_PROMPT = (
+#     "You will receive one highlighted **mask** image that shows where the operation is applied "
+#     "(yellow=added, red=removed, 半透明light purple=previous part)."
+# )
+
 DEFAULT_VISUAL_MASK_PROMPT = (
-    "One highlighted **mask** image that shows where the operation is applied "
-    "(yellow=added, red=removed, 半透明light purple=previous part)."
+    "You will receive one nine-view image showing the current model from different angles."
 )
 
 

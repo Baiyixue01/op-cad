@@ -23,12 +23,19 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 #   --gpu-memory-utilization 0.9 \
 #   --served-model-name Qwen2.5-7B
 
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+# CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+# python -m vllm.entrypoints.openai.api_server \
+#   --model /data/baiyixue/inference_model/llama_3.1_8b_coop_sft_full \
+#   --tensor-parallel-size 8 \
+#   --gpu-memory-utilization 0.9 \
+#   --max-model-len 128000 \
+#   --port 8001 \
+#   --served-model-name tool_agent
+CUDA_VISIBLE_DEVICES=0,3 \
 python -m vllm.entrypoints.openai.api_server \
-  --model /data/baiyixue/inference_model/llama_3.1_8b_coop_sft_full \
-  --tensor-parallel-size 8 \
+  --model /data/baiyixue/inference_model/Qwen2.5-Coder-3B-Instruct \
+  --tensor-parallel-size 2 \
   --gpu-memory-utilization 0.9 \
-  --max-model-len 128000 \
+  --max-model-len 32768 \
   --port 8001 \
-  --served-model-name tool_agent
-
+  --served-model-name Qwen2.5-Coder-3B-Instruct

@@ -301,16 +301,49 @@ def _build_openai_client():
     return client, api_key
 
 
+# def _build_multimodal_content(prompt: str, image_paths: Optional[List[str]] = None):
+#     content = [{"type": "text", "text": prompt}]
+#     for p in (image_paths or []):
+#         try:
+#             with open(p, "rb") as f:
+#                 b64 = base64.b64encode(f.read()).decode("utf-8")
+#             mime = mimetypes.guess_type(p)[0] or "image/png"
+#             content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+#         except Exception as e:
+#             print(f"[WARN] skip invalid image input '{p}': {e}")
+#     return content
+
 def _build_multimodal_content(prompt: str, image_paths: Optional[List[str]] = None):
     content = [{"type": "text", "text": prompt}]
+
     for p in (image_paths or []):
+        # 将 xxx/location.png 替换为 xxx/previous_model_grid.png
+        image_path = os.path.join(
+            os.path.dirname(p),
+            "previous_model_grid.png"
+        )
+
+        # 检查替换后的图片是否存在
+        if not os.path.exists(image_path):
+            print(f"[WARN] previous_model_grid.png not found: {image_path}")
+            continue
+
         try:
-            with open(p, "rb") as f:
+            with open(image_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode("utf-8")
-            mime = mimetypes.guess_type(p)[0] or "image/png"
-            content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+
+            mime = mimetypes.guess_type(image_path)[0] or "image/png"
+
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime};base64,{b64}"
+                }
+            })
+
         except Exception as e:
-            print(f"[WARN] skip invalid image input '{p}': {e}")
+            print(f"[WARN] skip invalid image input '{image_path}': {e}")
+
     return content
 
 
