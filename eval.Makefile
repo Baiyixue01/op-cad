@@ -24,7 +24,7 @@ LOCAL_PRECISION ?= bf16
 LOCAL_APPLY_CHAT_TEMPLATE ?= 1
 LOCAL_PROMPTS_CSV ?= /home/baiyixue/project/flowcad/data/prompt.csv
 LOCAL_PRE_CODE_DIR ?= /home/baiyixue/project/flowcad/data/pre_code
-LOCAL_SPLIT_JSON ?= /home/baiyixue/project/flowcad/data/split_result.json
+LOCAL_SPLIT_JSON ?= /home/baiyixue/project/flowcad/data/split_result_filtered.json
 LOCAL_SPLIT_KEY ?= test
 LOCAL_OUT_JSONL ?= /data/baiyixue/CAD/inference_result/local_highlight_ablation.jsonl
 
