@@ -24,9 +24,7 @@ _dedup_map = None
 THINKING = True   # === NEW: thinking ===
 VISUAL_MODE = False
 HIGHLIGHT_EMBEDDING_MODE = False
-EMBEDDING_SOURCE = "pred"
-GT_EMBED_DIR: Optional[str] = None
-PRED_EMBED_DIR: Optional[str] = None
+EMBED_DIR: Optional[str] = None
 
 
 def _normalize_visual_mask_path(v) -> Optional[str]:
@@ -121,7 +119,7 @@ def build_arg_parser():
         "--highlight-embedding",
         action="store_true",
         default=False,
-        help="Stage2 风格：在 prompt 中加入 EMBEDDING_NOTICE，并按 gt/pred 列或目录解析 .npy；"
+        help="Stage2 风格：在 prompt 中加入 EMBEDDING_NOTICE，并按 embedding_path 列或 --embed-dir 解析 .npy；"
              "仅 gen.mode=local 且 config 中 highlight_embedding 启用时做 soft-token 融合",
     )
     p.add_argument(
@@ -131,20 +129,9 @@ def build_arg_parser():
         help=argparse.SUPPRESS,
     )
     p.add_argument(
-        "--embedding-source",
-        choices=["gt", "pred"],
-        default="pred",
-        help="与 stage2 一致：使用哪路 embedding（默认 pred，对应列 pred_embedding_path 或 --pred-embed-dir）",
-    )
-    p.add_argument(
-        "--gt-embed-dir",
+        "--embed-dir",
         default=None,
-        help="GT 向量根目录：{sample_id}.npy，与 stage2 config.GT_EMBED_DIR 布局一致",
-    )
-    p.add_argument(
-        "--pred-embed-dir",
-        default=None,
-        help="Pred 向量根目录：{sample_id}.npy，与 stage2 config.PRED_EMBED_DIR 布局一致",
+        help="向量根目录：{sample_id}.npy；也可在 prompt.csv 中用 embedding_path 列直接指定文件",
     )
     
     # === One-shot few-shot 开关 ===
@@ -168,7 +155,7 @@ def apply_args(args):
     global WRITE_SUMMARY
     global THINKING, VISUAL_MODE
     global ONESHOT_ON, ONESHOT_CSV, META_CSV, BOOL_CSV
-    global HIGHLIGHT_EMBEDDING_MODE, EMBEDDING_SOURCE, GT_EMBED_DIR, PRED_EMBED_DIR
+    global HIGHLIGHT_EMBEDDING_MODE, EMBED_DIR
 
     ONESHOT_ON  = bool(getattr(args, "oneshot", False))
     ONESHOT_CSV = getattr(args, "oneshot_csv", None)
@@ -176,9 +163,7 @@ def apply_args(args):
     BOOL_CSV    = getattr(args, "bool_csv", None)
     VISUAL_MODE = bool(getattr(args, "visual_mode", False))
     HIGHLIGHT_EMBEDDING_MODE = bool(getattr(args, "highlight_embedding", False))
-    EMBEDDING_SOURCE = str(getattr(args, "embedding_source", "pred") or "pred").lower()
-    GT_EMBED_DIR = getattr(args, "gt_embed_dir", None)
-    PRED_EMBED_DIR = getattr(args, "pred_embed_dir", None)
+    EMBED_DIR = getattr(args, "embed_dir", None)
 
     # ===== 运行标识 & 目录结构 =====
     # 目录：<out-root>/<test-name>__<mode>/（附加时间戳避免覆盖，可按需去掉）
@@ -249,10 +234,7 @@ def apply_args(args):
     if VISUAL_MODE:
         print("[RUN] visual-mode=ON (using prompt.csv:image_mask/location.png)")
     if HIGHLIGHT_EMBEDDING_MODE:
-        print(
-            f"[RUN] highlight-embedding=ON  source={EMBEDDING_SOURCE}  "
-            f"gt_embed_dir={GT_EMBED_DIR!r}  pred_embed_dir={PRED_EMBED_DIR!r}"
-        )
+        print(f"[RUN] highlight-embedding=ON  embed_dir={EMBED_DIR!r}")
 
 
 
@@ -1301,14 +1283,12 @@ def process_one(r, K, COP, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     if HIGHLIGHT_EMBEDDING_MODE:
         highlight_emb_path = resolve_highlight_embedding_path(
             r,
-            source=EMBEDDING_SOURCE,
-            gt_embed_dir=GT_EMBED_DIR,
-            pred_embed_dir=PRED_EMBED_DIR,
+            embed_dir=EMBED_DIR,
         )
         if highlight_emb_path is None:
             print(
                 f"[WARN] highlight-embedding: no .npy for pid={pid} "
-                f"(source={EMBEDDING_SOURCE}); prompt still uses embedding notice."
+                f"(embed_dir={EMBED_DIR!r}); prompt still uses embedding notice."
             )
 
     prompt = build_incremental_cq_prompt(

@@ -5,7 +5,7 @@ SCRIPT := /home/baiyixue/project/op-cad/reward/evaluation.py
 #   pred: .../stage2_code_decoder/outputs/embeddings/pred
 #   gt:   .../stage2_code_decoder/outputs/embeddings/gt
 # 注意：不在仓库根 `jepa-cad-stage2-train/outputs`，而在 stage2_code_decoder 下。
-STAGE2_PRED_EMBED_DIR := /home/baiyixue/project/jepa-cad-stage2-train/stage2_code_decoder/outputs/embeddings/gt
+STAGE2_EMBED_DIR := /home/baiyixue/project/jepa-cad-stage2-train/stage2_code_decoder/outputs/embeddings/gt
 
 .PHONY: run gemini Qwen3-vl-vision Qwen2.5-3b-coder Qwen2.5-3b-coder-highlight repair
 
@@ -79,8 +79,7 @@ Qwen2.5-3b-coder-highlight:
 		--vllm-endpoint-key port1 \
 		--http-model Qwen2.5-Coder-3B-q2 \
 		--highlight-embedding \
-		--embedding-source gt \
-		--pred-embed-dir $(STAGE2_PRED_EMBED_DIR) \
+		--embed-dir $(STAGE2_EMBED_DIR) \
 		--nproc 64
 
 # ===== 修正模式 =====
