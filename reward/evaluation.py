@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import cadquery as cq
 from model_call import call_model as cm
+from model_call.highlight_paths import resolve_highlight_embedding_path
 import os, re, ast
 import sys
 import signal
@@ -22,6 +23,10 @@ from datetime import datetime
 _dedup_map = None
 THINKING = True   # === NEW: thinking ===
 VISUAL_MODE = False
+HIGHLIGHT_EMBEDDING_MODE = False
+EMBEDDING_SOURCE = "pred"
+GT_EMBED_DIR: Optional[str] = None
+PRED_EMBED_DIR: Optional[str] = None
 
 
 def _normalize_visual_mask_path(v) -> Optional[str]:
@@ -112,6 +117,35 @@ def build_arg_parser():
                 help="启用 thinking 模式：请求模型返回含思维/轨迹的答案，并在输出目录打标签")
     p.add_argument("--visual-mode", action="store_true", default=False,
                 help="视觉模式：从 prompt.csv 的 image_mask 读取高亮 location.png，并作为模型图像输入")
+    p.add_argument(
+        "--highlight-embedding",
+        action="store_true",
+        default=False,
+        help="Stage2 风格：在 prompt 中加入 EMBEDDING_NOTICE，并按 gt/pred 列或目录解析 .npy；"
+             "仅 gen.mode=local 且 config 中 highlight_embedding 启用时做 soft-token 融合",
+    )
+    p.add_argument(
+        "--hightlight-embedding",
+        action="store_true",
+        dest="highlight_embedding",
+        help=argparse.SUPPRESS,
+    )
+    p.add_argument(
+        "--embedding-source",
+        choices=["gt", "pred"],
+        default="pred",
+        help="与 stage2 一致：使用哪路 embedding（默认 pred，对应列 pred_embedding_path 或 --pred-embed-dir）",
+    )
+    p.add_argument(
+        "--gt-embed-dir",
+        default=None,
+        help="GT 向量根目录：{sample_id}.npy，与 stage2 config.GT_EMBED_DIR 布局一致",
+    )
+    p.add_argument(
+        "--pred-embed-dir",
+        default=None,
+        help="Pred 向量根目录：{sample_id}.npy，与 stage2 config.PRED_EMBED_DIR 布局一致",
+    )
     
     # === One-shot few-shot 开关 ===
     p.add_argument("--oneshot", action="store_true", default=False,
@@ -134,12 +168,17 @@ def apply_args(args):
     global WRITE_SUMMARY
     global THINKING, VISUAL_MODE
     global ONESHOT_ON, ONESHOT_CSV, META_CSV, BOOL_CSV
+    global HIGHLIGHT_EMBEDDING_MODE, EMBEDDING_SOURCE, GT_EMBED_DIR, PRED_EMBED_DIR
 
     ONESHOT_ON  = bool(getattr(args, "oneshot", False))
     ONESHOT_CSV = getattr(args, "oneshot_csv", None)
     META_CSV    = getattr(args, "meta_csv", None)
     BOOL_CSV    = getattr(args, "bool_csv", None)
     VISUAL_MODE = bool(getattr(args, "visual_mode", False))
+    HIGHLIGHT_EMBEDDING_MODE = bool(getattr(args, "highlight_embedding", False))
+    EMBEDDING_SOURCE = str(getattr(args, "embedding_source", "pred") or "pred").lower()
+    GT_EMBED_DIR = getattr(args, "gt_embed_dir", None)
+    PRED_EMBED_DIR = getattr(args, "pred_embed_dir", None)
 
     # ===== 运行标识 & 目录结构 =====
     # 目录：<out-root>/<test-name>__<mode>/（附加时间戳避免覆盖，可按需去掉）
@@ -209,6 +248,11 @@ def apply_args(args):
     print(f"[RUN] prompts={PROMPTS_CSV}  nproc={NPROC}  resume={RESUME}  seed={SEED}")
     if VISUAL_MODE:
         print("[RUN] visual-mode=ON (using prompt.csv:image_mask/location.png)")
+    if HIGHLIGHT_EMBEDDING_MODE:
+        print(
+            f"[RUN] highlight-embedding=ON  source={EMBEDDING_SOURCE}  "
+            f"gt_embed_dir={GT_EMBED_DIR!r}  pred_embed_dir={PRED_EMBED_DIR!r}"
+        )
 
 
 
@@ -1253,6 +1297,20 @@ def process_one(r, K, COP, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
     op_kind = str(r.get("op", "")).lower()
     visual_image = _normalize_visual_mask_path(r.get("image_mask")) if VISUAL_MODE else None
 
+    highlight_emb_path = None
+    if HIGHLIGHT_EMBEDDING_MODE:
+        highlight_emb_path = resolve_highlight_embedding_path(
+            r,
+            source=EMBEDDING_SOURCE,
+            gt_embed_dir=GT_EMBED_DIR,
+            pred_embed_dir=PRED_EMBED_DIR,
+        )
+        if highlight_emb_path is None:
+            print(
+                f"[WARN] highlight-embedding: no .npy for pid={pid} "
+                f"(source={EMBEDDING_SOURCE}); prompt still uses embedding notice."
+            )
+
     prompt = build_incremental_cq_prompt(
         previous_code=prev_code,
         operation_instruction=r["prompt_text"],
@@ -1262,7 +1320,8 @@ def process_one(r, K, COP, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
         current_var_name=f"result{step_num-1} " if not first_step else None,
         next_var_name="result",
         allow_comments=False,
-        op_kind=op_kind
+        op_kind=op_kind,
+        use_highlight_embedding=bool(HIGHLIGHT_EMBEDDING_MODE),
     )
 
     # print(prompt)
@@ -1272,6 +1331,7 @@ def process_one(r, K, COP, GT_SINGLE_STEP_DIR, GT_EDGES_DIR):
         K,
         thinking=THINKING,
         image_paths=[visual_image] if visual_image else None,
+        highlight_embedding_path=highlight_emb_path if HIGHLIGHT_EMBEDDING_MODE else None,
     )
 
     # 结果收集

@@ -3,6 +3,8 @@ from typing import List, Dict, Any
 from .config_loader import load_config
 from typing import Optional
 
+import numpy as np
+
 
 RATE_LIMIT_WAIT_S = 65          # 429 时等待 60 秒
 RATE_LIMIT_MAX_RETRIES = 6      # 429 最多重试 6 次（总等待不超过 6 分钟）
@@ -210,6 +212,7 @@ def set_runtime_config(
             raise RuntimeError("API mode enabled but no API backend selected.")
     else:
         MODEL = "auto"
+
 # ===== 本地模型（占位）=====
 def run_local_model(prompt: str) -> str:
     # TODO: 替换为你的本地推理
@@ -279,6 +282,167 @@ def _extract_code_from_text(text: str) -> str:
 
     # 5) 最终兜底：原样去首尾
     return cleaned.strip()
+
+
+# ----- Stage2-style highlight embedding (local only, inputs_embeds) -----
+import torch
+from torch import nn
+
+
+class HighlightProjector(nn.Module):
+    """Mirrors stage2 HighlightProjector; kept local to avoid importing stage2_train."""
+
+    def __init__(self, input_dim: int, hidden_size: int, num_soft_tokens: int):
+        super().__init__()
+        self.num_soft_tokens = num_soft_tokens
+        self.hidden_size = hidden_size
+        self.net = nn.Sequential(
+            nn.LayerNorm(input_dim),
+            nn.Linear(input_dim, hidden_size * num_soft_tokens),
+        )
+
+    def forward(self, z_highlight):
+        soft_tokens = self.net(z_highlight)
+        return soft_tokens.view(-1, self.num_soft_tokens, self.hidden_size)
+
+
+_HIGHLIGHT_PIPELINE = None
+_WARNED_HIGHLIGHT_NON_LOCAL = False
+
+
+def _resolve_torch_dtype(name: str):
+    import torch as _t
+
+    n = (name or "bf16").lower()
+    if n == "bf16":
+        return _t.bfloat16
+    if n == "fp16":
+        return _t.float16
+    return _t.float32
+
+
+def _load_highlight_pipeline():
+    """Lazy-load tokenizer + Peft model + projector from CFG['highlight_embedding']."""
+    global _HIGHLIGHT_PIPELINE
+    if _HIGHLIGHT_PIPELINE is not None:
+        return _HIGHLIGHT_PIPELINE
+
+    he = CFG.get("highlight_embedding") or {}
+    if not bool(he.get("enabled")):
+        return None
+
+    base = (he.get("base_model") or "").strip()
+    ckpt = (he.get("checkpoint") or "").strip()
+    if not base or not ckpt or not os.path.isfile(ckpt):
+        print("[WARN] highlight_embedding.enabled but base_model/checkpoint missing or not a file.")
+        return None
+
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from peft import PeftModel
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = _resolve_torch_dtype(str(he.get("precision") or "bf16"))
+
+    tokenizer = AutoTokenizer.from_pretrained(base, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
+        base,
+        torch_dtype=dtype,
+        trust_remote_code=True,
+    )
+    lora = (he.get("lora_adapter") or "").strip()
+    if lora and os.path.isdir(lora):
+        model = PeftModel.from_pretrained(model, lora)
+    model = model.to(device=device).eval()
+
+    hidden = model.get_input_embeddings().embedding_dim
+    dim = int(he.get("highlight_embed_dim", 1536))
+    n_soft = int(he.get("num_soft_tokens", 16))
+    projector = HighlightProjector(dim, hidden, n_soft).to(device=device, dtype=dtype)
+
+    payload = torch.load(ckpt, map_location=device)
+    sd = payload["projector"] if isinstance(payload, dict) and "projector" in payload else payload
+    projector.load_state_dict(sd)
+    projector.eval()
+
+    _HIGHLIGHT_PIPELINE = {
+        "tokenizer": tokenizer,
+        "model": model,
+        "projector": projector,
+        "device": device,
+        "dtype": dtype,
+        "num_soft_tokens": n_soft,
+        "max_new_tokens": int(he.get("max_new_tokens", 512)),
+    }
+    return _HIGHLIGHT_PIPELINE
+
+
+def run_local_highlight_generate(prompt: str, embedding_path: str) -> Dict[str, Any]:
+    """Local causal LM generation with soft tokens + inputs_embeds (stage2-style)."""
+    pipe = _load_highlight_pipeline()
+    if pipe is None:
+        return {
+            "code": "",
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+            "backend": "local_highlight",
+            "err": "highlight_embedding_not_configured",
+        }
+
+    if not embedding_path or not os.path.isfile(embedding_path):
+        return {
+            "code": "",
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+            "backend": "local_highlight",
+            "err": f"embedding_missing:{embedding_path}",
+        }
+
+    tokenizer = pipe["tokenizer"]
+    model = pipe["model"]
+    projector = pipe["projector"]
+    device = pipe["device"]
+    dtype = pipe["dtype"]
+    n_soft = pipe["num_soft_tokens"]
+    max_new = pipe["max_new_tokens"]
+
+    tokenized = tokenizer(prompt, return_tensors="pt", truncation=True)
+    tokenized = {k: v.to(device) for k, v in tokenized.items()}
+
+    z = np.load(embedding_path)
+    z_t = torch.tensor(z, dtype=torch.float32, device=device).unsqueeze(0)
+    soft_tokens = projector(z_t.to(dtype=dtype))
+    text_embeds = model.get_input_embeddings()(tokenized["input_ids"])
+    inputs_embeds = torch.cat([soft_tokens, text_embeds], dim=1)
+    soft_mask = torch.ones((1, n_soft), dtype=tokenized["attention_mask"].dtype, device=device)
+    attention_mask = torch.cat([soft_mask, tokenized["attention_mask"]], dim=1)
+    prefix_len = inputs_embeds.shape[1]
+
+    with torch.no_grad():
+        generated = model.generate(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new,
+            do_sample=False,
+            temperature=0.0,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+    text = tokenizer.decode(generated[0][prefix_len:], skip_special_tokens=True)
+    code = _extract_code_from_text(text)
+    out_len = int(generated.shape[1])
+    return {
+        "code": code,
+        "input_tokens": int(prefix_len),
+        "output_tokens": int(out_len - prefix_len),
+        "total_tokens": out_len,
+        "backend": "local_highlight",
+        "err": "",
+    }
 
 
 # ===== OpenAI backend =====
@@ -585,21 +749,41 @@ def _try_local_then_api(prompt: str, image_paths: Optional[List[str]] = None) ->
     }
 
 
-def get_model_candidates(prompt: str, k: int, *, thinking: bool = False, image_paths: Optional[List[str]] = None):
+def get_model_candidates(
+    prompt: str,
+    k: int,
+    *,
+    thinking: bool = False,
+    image_paths: Optional[List[str]] = None,
+    highlight_embedding_path: Optional[str] = None,
+):
+    global _WARNED_HIGHLIGHT_NON_LOCAL
     mode = str(CFG["gen"]["mode"]).lower()
     results: List[Dict[str, Any]] = []
     pid = os.getpid()
+
+    if highlight_embedding_path and mode != "local":
+        if not _WARNED_HIGHLIGHT_NON_LOCAL:
+            print(
+                "[WARN] Resolved highlight .npy paths are fused only when gen.mode=local and "
+                "`highlight_embedding` is enabled in config.json; remote/API backends still "
+                "receive the extended prompt text only."
+            )
+            _WARNED_HIGHLIGHT_NON_LOCAL = True
 
     # 用 “收集到k条为止”的循环，遇到 429 的占位错误就继续重试，不append
     while len(results) < (k or 1):
         try:
             if mode == "local":
-                code = run_local_model(prompt)
-                result = {
-                    "code": _extract_code_from_text(code),
-                    "input_tokens": None, "output_tokens": None, "total_tokens": None,
-                    "backend": "local", "err": ""
-                }
+                if highlight_embedding_path:
+                    result = run_local_highlight_generate(prompt, highlight_embedding_path)
+                else:
+                    code = run_local_model(prompt)
+                    result = {
+                        "code": _extract_code_from_text(code),
+                        "input_tokens": None, "output_tokens": None, "total_tokens": None,
+                        "backend": "local", "err": ""
+                    }
             elif mode == "api":
                 if CFG["openai"]["enabled"]:
                     result = _gen_via_openai(prompt,thinking=thinking, image_paths=image_paths)

@@ -11,6 +11,12 @@ DEFAULT_VISUAL_MASK_PROMPT = (
     "You will receive one nine-view image showing the current model from different angles."
 )
 
+# Same wording as stage2 `stage2_code_decoder.config.EMBEDDING_NOTICE`
+EMBEDDING_NOTICE = (
+    "A predicted highlight embedding is provided as soft tokens before this text. "
+    "It represents the likely spatial region and local geometry change of the current CAD operation."
+)
+
 
 def build_visual_mask_prompt() -> str:
     """统一视觉模式下的高亮 mask 提示词。"""
@@ -38,6 +44,7 @@ def build_incremental_cq_prompt(
     add_size_guidelines: bool = False,
     op_kind: Optional[str] = None,
     few_shots: Optional[List[Dict]] = None,
+    use_highlight_embedding: bool = False,
 ) -> str:
     """
     构建“增量式 CadQuery 代码生成”Prompt（风格对齐精简版），功能保持不变：
@@ -195,6 +202,9 @@ def build_incremental_cq_prompt(
         "Generate ONLY the incremental CadQuery code needed to perform the requested operation, "
         "as a continuation of the provided previous code context."
     )
+
+    if use_highlight_embedding:
+        sections.append("### Embedding Guidance\n" + EMBEDDING_NOTICE)
 
     if few_shots_block:
         sections.append(few_shots_block)

@@ -33,7 +33,19 @@ _DEFAULTS: Dict[str, Any] = {
         "prompts_csv": "./prompts.csv",
         "out_csv": "./out_eval.csv",
         "tmp_dir": "./_tmp_eval"
-    }
+    },
+    # Optional: local highlight-embedding inference (stage2-style soft tokens). Used when gen.mode=local
+    # and evaluation passes a resolved .npy path into get_model_candidates.
+    "highlight_embedding": {
+        "enabled": False,
+        "base_model": "",
+        "lora_adapter": "",
+        "checkpoint": "",
+        "highlight_embed_dim": 1536,
+        "num_soft_tokens": 16,
+        "max_new_tokens": 512,
+        "precision": "bf16",
+    },
 }
 
 _SECRET_KEYS = {
