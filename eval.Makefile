@@ -1,5 +1,6 @@
 PYTHON := /data/baiyixue/envs/trl/bin/python
 SCRIPT := /home/baiyixue/project/op-cad/reward/evaluation.py
+LOCAL_INFER_SCRIPT := /home/baiyixue/project/op-cad/reward/local_highlight_infer.py
 
 # stage2 预计算向量（在 rlcad 上经 `octo run rlcad ls ...` 确认）：
 #   pred: .../stage2_code_decoder/outputs/embeddings/pred
@@ -7,7 +8,35 @@ SCRIPT := /home/baiyixue/project/op-cad/reward/evaluation.py
 # 注意：不在仓库根 `jepa-cad-stage2-train/outputs`，而在 stage2_code_decoder 下。
 STAGE2_EMBED_DIR := /home/baiyixue/project/jepa-cad-stage2-train/stage2_code_decoder/outputs/embeddings/gt
 
-.PHONY: run gemini Qwen3-vl-vision Qwen2.5-3b-coder Qwen2.5-3b-coder-highlight repair
+# Local highlight-embedding ablation. Override these on the make command line.
+LOCAL_BASE_MODEL ?=
+LOCAL_LORA_ADAPTER ?=
+LOCAL_PROJECTOR_CKPT ?=
+LOCAL_MODE ?= both
+LOCAL_DEVICES ?= cuda:0
+LOCAL_BATCH_SIZE ?= 1
+LOCAL_LIMIT ?= 20
+LOCAL_MAX_NEW_TOKENS ?= 2048
+LOCAL_MAX_INPUT_TOKENS ?= 32768
+LOCAL_MAX_MODEL_LEN ?= 32768
+LOCAL_ATTN_IMPL ?= sdpa
+LOCAL_PRECISION ?= bf16
+LOCAL_APPLY_CHAT_TEMPLATE ?= 1
+LOCAL_PROMPTS_CSV ?= /home/baiyixue/project/flowcad/data/prompt.csv
+LOCAL_PRE_CODE_DIR ?= /home/baiyixue/project/flowcad/data/pre_code
+LOCAL_SPLIT_JSON ?= /home/baiyixue/project/flowcad/data/split_result.json
+LOCAL_SPLIT_KEY ?= test
+LOCAL_OUT_JSONL ?= /data/baiyixue/CAD/inference_result/local_highlight_ablation.jsonl
+
+ifneq ($(strip $(LOCAL_LORA_ADAPTER)),)
+LOCAL_LORA_ARG := --lora-adapter $(LOCAL_LORA_ADAPTER)
+endif
+
+ifeq ($(LOCAL_APPLY_CHAT_TEMPLATE),1)
+LOCAL_CHAT_TEMPLATE_ARG := --apply-chat-template
+endif
+
+.PHONY: run gemini Qwen3-vl-vision Qwen2.5-3b-coder Qwen2.5-3b-coder-highlight local-highlight repair
 
 # 用脚本默认参数
 run:
@@ -81,6 +110,30 @@ Qwen2.5-3b-coder-highlight:
 		--highlight-embedding \
 		--embed-dir $(STAGE2_EMBED_DIR) \
 		--nproc 64
+
+local-highlight:
+	@test -n "$(LOCAL_BASE_MODEL)" || (echo "Set LOCAL_BASE_MODEL=/path/to/base_model"; exit 1)
+	@test -n "$(LOCAL_PROJECTOR_CKPT)" || (echo "Set LOCAL_PROJECTOR_CKPT=/path/to/projector_checkpoint.pt"; exit 1)
+	$(PYTHON) $(LOCAL_INFER_SCRIPT) \
+		--prompts-csv $(LOCAL_PROMPTS_CSV) \
+		--pre-code-dir $(LOCAL_PRE_CODE_DIR) \
+		--embed-dir $(STAGE2_EMBED_DIR) \
+		--out-jsonl $(LOCAL_OUT_JSONL) \
+		--split-json $(LOCAL_SPLIT_JSON) \
+		--split-key $(LOCAL_SPLIT_KEY) \
+		--base-model $(LOCAL_BASE_MODEL) \
+		$(LOCAL_LORA_ARG) \
+		--projector-checkpoint $(LOCAL_PROJECTOR_CKPT) \
+		--mode $(LOCAL_MODE) \
+		--devices $(LOCAL_DEVICES) \
+		--batch-size $(LOCAL_BATCH_SIZE) \
+		--limit $(LOCAL_LIMIT) \
+		--max-new-tokens $(LOCAL_MAX_NEW_TOKENS) \
+		--max-input-tokens $(LOCAL_MAX_INPUT_TOKENS) \
+		--max-model-len $(LOCAL_MAX_MODEL_LEN) \
+		--attn-impl $(LOCAL_ATTN_IMPL) \
+		--precision $(LOCAL_PRECISION) \
+		$(LOCAL_CHAT_TEMPLATE_ARG)
 
 # ===== 修正模式 =====
 repair:
