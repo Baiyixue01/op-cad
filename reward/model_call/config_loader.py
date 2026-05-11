@@ -129,8 +129,8 @@ def load_config(path: str = None) -> Dict[str, Any]:
 def _validate_config(cfg: Dict[str, Any]) -> None:
     # 模式合法性
     mode = str(cfg["gen"]["mode"]).lower()
-    if mode not in ("local", "api", "auto"):
-        raise ValueError(f"gen.mode must be one of local/api/auto, got: {mode}")
+    if mode not in ("local", "local-highlight", "api", "auto"):
+        raise ValueError(f"gen.mode must be one of local/local-highlight/api/auto, got: {mode}")
 
     # 若 API 模式启用但没任何后端
     if mode in ("api", "auto"):

@@ -54,6 +54,8 @@ def build_arg_parser():
                    help="数据划分JSON（包含 train/val/test 等列表），只评测 split-key 对应列表中的 group_index")
     p.add_argument("--split-key", default="test",
                    help="split-json 中的键名（默认 test）")
+    p.add_argument("--limit", type=int, default=0,
+                   help="仅运行过滤后的前 N 条样本；0 表示不限制")
 
     # 输入/输出路径
     p.add_argument("--prompts-csv", default="./data/prompt.csv", help="至少包含 group_index,prompt_text 的 CSV")
@@ -101,8 +103,8 @@ def build_arg_parser():
     )
 
     # ==== 模型配置覆盖 ====
-    p.add_argument("--gen-mode", choices=["local","api","auto"], default=None,
-               help="生成模式覆盖：local/api/auto（覆盖 config.json）")
+    p.add_argument("--gen-mode", choices=["local","local-highlight","api","auto"], default=None,
+               help="生成模式覆盖：local/local-highlight/api/auto（覆盖 config.json）")
     p.add_argument("--provider", choices=["openai","http","local","siliconflow","vllm"], default=None,
                 help="指定API提供方或本地：openai/http/local（覆盖 config.json 的 enabled）")
     p.add_argument("--openai-model", default=None, help="覆盖 OpenAI 模型名，如 gpt-4o")
@@ -133,6 +135,26 @@ def build_arg_parser():
         default=None,
         help="向量根目录：{sample_id}.npy；也可在 prompt.csv 中用 embedding_path 列直接指定文件",
     )
+    p.add_argument("--local-base-model", default=None,
+                   help="local-highlight: merged/base HF 模型路径")
+    p.add_argument("--local-lora-adapter", default=None,
+                   help="local-highlight: 可选 LoRA adapter；若模型已 merge 则留空")
+    p.add_argument("--local-projector-ckpt", default=None,
+                   help="local-highlight: projector checkpoint，需包含 projector state_dict")
+    p.add_argument("--local-devices", default=None,
+                   help="local-highlight: 多进程 GPU 分配列表，例如 cuda:0,cuda:1")
+    p.add_argument("--local-max-model-len", type=int, default=None,
+                   help="local-highlight: 模型总上下文预算，默认 config 或 32768")
+    p.add_argument("--local-max-input-tokens", type=int, default=None,
+                   help="local-highlight: 输入 token 上限，会按 max_model_len/max_new_tokens/soft tokens 自动收缩")
+    p.add_argument("--local-max-new-tokens", type=int, default=None,
+                   help="local-highlight: 最大生成 token 数")
+    p.add_argument("--local-attn-impl", default=None, choices=["", "sdpa", "flash_attention_2", "eager"],
+                   help="local-highlight: transformers attn_implementation")
+    p.add_argument("--local-precision", default=None, choices=["bf16", "fp16", "fp32"],
+                   help="local-highlight: 本地推理精度")
+    p.add_argument("--local-apply-chat-template", action="store_true", default=False,
+                   help="local-highlight: 使用 tokenizer chat template 包装 prompt")
     
     # === One-shot few-shot 开关 ===
     p.add_argument("--oneshot", action="store_true", default=False,
@@ -177,6 +199,30 @@ def apply_args(args):
     temperature=args.gen_temperature,
     timeout_s=args.gen_timeout
     )
+
+    he = cm.CFG.setdefault("highlight_embedding", {})
+    if args.gen_mode == "local-highlight" or HIGHLIGHT_EMBEDDING_MODE:
+        he["enabled"] = bool(HIGHLIGHT_EMBEDDING_MODE or args.gen_mode == "local-highlight")
+    if args.local_base_model:
+        he["base_model"] = args.local_base_model
+    if args.local_lora_adapter is not None:
+        he["lora_adapter"] = args.local_lora_adapter
+    if args.local_projector_ckpt:
+        he["checkpoint"] = args.local_projector_ckpt
+    if args.local_devices:
+        he["devices"] = args.local_devices
+    if args.local_max_model_len is not None:
+        he["max_model_len"] = int(args.local_max_model_len)
+    if args.local_max_input_tokens is not None:
+        he["max_input_tokens"] = int(args.local_max_input_tokens)
+    if args.local_max_new_tokens is not None:
+        he["max_new_tokens"] = int(args.local_max_new_tokens)
+    if args.local_attn_impl is not None:
+        he["attn_impl"] = args.local_attn_impl
+    if args.local_precision is not None:
+        he["precision"] = args.local_precision
+    if args.local_apply_chat_template:
+        he["apply_chat_template"] = True
 
     # 如果 test_name 没传，这里再用“最新的”模型名作为默认
     if not args.test_name:
@@ -1627,6 +1673,11 @@ def main_parallel():
         df = df[df["group_index"].astype(str).isin(white_set)].copy()
         print(f"[SPLIT] split-json={args.split_json} key={key}  kept={len(df)}/{n_before}")
 
+    if getattr(args, "limit", 0):
+        n_before = len(df)
+        df = df.head(int(args.limit)).copy()
+        print(f"[LIMIT] kept={len(df)}/{n_before}")
+
     # RESUME：从 summary.csv 读取已完成样本
 # 结果缓冲区 (!!! 提前初始化 !!!)
     # all_cand_rows = []
@@ -1658,7 +1709,10 @@ def main_parallel():
     buffer_count = 0
 
     # ---- 带进度条 ----
-    with mp.Pool(processes=NPROC,maxtasksperchild=10) as pool:
+    pool_kwargs = {"processes": NPROC}
+    if str(cm.CFG.get("gen", {}).get("mode", "")).lower() != "local-highlight":
+        pool_kwargs["maxtasksperchild"] = 10
+    with mp.Pool(**pool_kwargs) as pool:
         worker = partial(process_one, K=K, COP=COP,
                         GT_SINGLE_STEP_DIR=GT_SINGLE_STEP_DIR,
                         GT_EDGES_DIR=GT_EDGES_DIR)

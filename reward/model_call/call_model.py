@@ -200,7 +200,9 @@ def set_runtime_config(
 
     # 5) 刷新 MODEL（保持你原来的逻辑）
     mode = str(CFG.get("gen", {}).get("mode", "auto")).lower()
-    if mode == "local":
+    if mode == "local-highlight":
+        MODEL = "local_highlight"
+    elif mode == "local":
         MODEL = "local"
     elif mode == "api":
         if CFG.get("openai", {}).get("enabled"):
@@ -340,29 +342,73 @@ def _load_highlight_pipeline():
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from peft import PeftModel
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_name = str(he.get("device") or "").strip()
+    devices = he.get("devices")
+    if not device_name and devices:
+        if isinstance(devices, str):
+            device_list = [x.strip() for x in devices.split(",") if x.strip()]
+        else:
+            device_list = [str(x).strip() for x in devices if str(x).strip()]
+        if device_list:
+            try:
+                import multiprocessing as _mp
+                ident = _mp.current_process()._identity
+                worker_idx = int(ident[0]) - 1 if ident else 0
+            except Exception:
+                worker_idx = 0
+            device_name = device_list[worker_idx % len(device_list)]
+    if not device_name:
+        device_name = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device(device_name)
     dtype = _resolve_torch_dtype(str(he.get("precision") or "bf16"))
+    max_model_len = int(he.get("max_model_len", 32768))
+    max_new_tokens = int(he.get("max_new_tokens", 2048))
+    n_soft = int(he.get("num_soft_tokens", 16))
+    requested_max_input = int(he.get("max_input_tokens", max_model_len))
+    safe_max_input = max_model_len - max_new_tokens - n_soft
+    if safe_max_input <= 0:
+        raise ValueError(
+            f"Invalid highlight length budget: max_model_len={max_model_len}, "
+            f"max_new_tokens={max_new_tokens}, num_soft_tokens={n_soft}"
+        )
+    max_input_tokens = min(requested_max_input, safe_max_input)
 
-    tokenizer = AutoTokenizer.from_pretrained(base, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        base,
+        trust_remote_code=True,
+        model_max_length=max_input_tokens,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+    tokenizer.truncation_side = "left"
 
-    model = AutoModelForCausalLM.from_pretrained(
-        base,
-        torch_dtype=dtype,
-        trust_remote_code=True,
-    )
+    load_kwargs = {
+        "torch_dtype": dtype,
+        "trust_remote_code": True,
+        "low_cpu_mem_usage": True,
+    }
+    if str(device).startswith("cuda"):
+        load_kwargs["device_map"] = {"": device}
+    attn_impl = str(he.get("attn_impl") or "").strip()
+    if attn_impl:
+        load_kwargs["attn_implementation"] = attn_impl
+
+    model = AutoModelForCausalLM.from_pretrained(base, **load_kwargs)
     lora = (he.get("lora_adapter") or "").strip()
     if lora and os.path.isdir(lora):
         model = PeftModel.from_pretrained(model, lora)
-    model = model.to(device=device).eval()
+    if not str(device).startswith("cuda"):
+        model = model.to(device=device)
+    model.eval()
+    if hasattr(model, "config"):
+        model.config.use_cache = True
 
     hidden = model.get_input_embeddings().embedding_dim
     dim = int(he.get("highlight_embed_dim", 1536))
-    n_soft = int(he.get("num_soft_tokens", 16))
     projector = HighlightProjector(dim, hidden, n_soft).to(device=device, dtype=dtype)
 
-    payload = torch.load(ckpt, map_location=device)
+    payload = torch.load(ckpt, map_location=device, weights_only=False)
     sd = payload["projector"] if isinstance(payload, dict) and "projector" in payload else payload
     projector.load_state_dict(sd)
     projector.eval()
@@ -374,9 +420,23 @@ def _load_highlight_pipeline():
         "device": device,
         "dtype": dtype,
         "num_soft_tokens": n_soft,
-        "max_new_tokens": int(he.get("max_new_tokens", 512)),
+        "max_new_tokens": max_new_tokens,
+        "max_input_tokens": max_input_tokens,
+        "apply_chat_template": bool(he.get("apply_chat_template", False)),
+        "temperature": float(CFG.get("gen", {}).get("temperature", 0.0) or 0.0),
+        "top_p": float(CFG.get("gen", {}).get("top_p", 1.0) or 1.0),
     }
     return _HIGHLIGHT_PIPELINE
+
+
+def _format_local_prompt(tokenizer, prompt: str, apply_chat_template: bool) -> str:
+    if not apply_chat_template:
+        return prompt
+    return tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
 
 
 def run_local_highlight_generate(prompt: str, embedding_path: str) -> Dict[str, Any]:
@@ -409,8 +469,18 @@ def run_local_highlight_generate(prompt: str, embedding_path: str) -> Dict[str, 
     dtype = pipe["dtype"]
     n_soft = pipe["num_soft_tokens"]
     max_new = pipe["max_new_tokens"]
+    max_input_tokens = pipe["max_input_tokens"]
+    apply_chat_template = pipe["apply_chat_template"]
+    temperature = float(pipe.get("temperature", 0.0) or 0.0)
+    top_p = float(pipe.get("top_p", 1.0) or 1.0)
 
-    tokenized = tokenizer(prompt, return_tensors="pt", truncation=True)
+    formatted_prompt = _format_local_prompt(tokenizer, prompt, apply_chat_template)
+    tokenized = tokenizer(
+        formatted_prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=max_input_tokens,
+    )
     tokenized = {k: v.to(device) for k, v in tokenized.items()}
 
     z = np.load(embedding_path)
@@ -423,16 +493,22 @@ def run_local_highlight_generate(prompt: str, embedding_path: str) -> Dict[str, 
     prefix_len = inputs_embeds.shape[1]
 
     with torch.no_grad():
+        gen_kwargs = {
+            "max_new_tokens": max_new,
+            "do_sample": temperature > 0,
+            "top_p": top_p,
+            "pad_token_id": tokenizer.pad_token_id,
+            "eos_token_id": tokenizer.eos_token_id,
+        }
+        if temperature > 0:
+            gen_kwargs["temperature"] = temperature
         generated = model.generate(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            max_new_tokens=max_new,
-            do_sample=False,
-            temperature=0.0,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+            **gen_kwargs,
         )
-    text = tokenizer.decode(generated[0][prefix_len:], skip_special_tokens=True)
+    new_tokens = generated[0][prefix_len:] if generated.shape[1] > prefix_len else generated[0]
+    text = tokenizer.decode(new_tokens, skip_special_tokens=True)
     code = _extract_code_from_text(text)
     out_len = int(generated.shape[1])
     return {
@@ -762,10 +838,10 @@ def get_model_candidates(
     results: List[Dict[str, Any]] = []
     pid = os.getpid()
 
-    if highlight_embedding_path and mode != "local":
+    if highlight_embedding_path and mode not in ("local", "local-highlight"):
         if not _WARNED_HIGHLIGHT_NON_LOCAL:
             print(
-                "[WARN] Resolved highlight .npy paths are fused only when gen.mode=local and "
+                "[WARN] Resolved highlight .npy paths are fused only when gen.mode=local/local-highlight and "
                 "`highlight_embedding` is enabled in config.json; remote/API backends still "
                 "receive the extended prompt text only."
             )
@@ -783,6 +859,18 @@ def get_model_candidates(
                         "code": _extract_code_from_text(code),
                         "input_tokens": None, "output_tokens": None, "total_tokens": None,
                         "backend": "local", "err": ""
+                    }
+            elif mode == "local-highlight":
+                if highlight_embedding_path:
+                    result = run_local_highlight_generate(prompt, highlight_embedding_path)
+                else:
+                    result = {
+                        "code": "",
+                        "input_tokens": None,
+                        "output_tokens": None,
+                        "total_tokens": None,
+                        "backend": "local_highlight",
+                        "err": "embedding_missing",
                     }
             elif mode == "api":
                 if CFG["openai"]["enabled"]:
@@ -802,6 +890,16 @@ def get_model_candidates(
             result.setdefault("err", "")
             results.append(result)
 
+        except torch.cuda.OutOfMemoryError as e:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+            err_msg = f"cuda_oom:{type(e).__name__}: {e}"
+            print(f"[PID {pid}] ERROR: {err_msg}")
+            results.append({
+                "code": "", "input_tokens": None, "output_tokens": None, "total_tokens": None,
+                "backend": mode, "err": err_msg
+            })
         except Exception as e:
             err_msg = f"{type(e).__name__}: {e}"
             print(f"[PID {pid}] ERROR: {err_msg}")

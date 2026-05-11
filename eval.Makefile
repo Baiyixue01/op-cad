@@ -16,6 +16,7 @@ LOCAL_MODE ?= both
 LOCAL_DEVICES ?= cuda:0
 LOCAL_BATCH_SIZE ?= 1
 LOCAL_LIMIT ?= 20
+LOCAL_NPROC ?= 1
 LOCAL_MAX_NEW_TOKENS ?= 2048
 LOCAL_MAX_INPUT_TOKENS ?= 32768
 LOCAL_MAX_MODEL_LEN ?= 32768
@@ -33,7 +34,7 @@ LOCAL_LORA_ARG := --lora-adapter $(LOCAL_LORA_ADAPTER)
 endif
 
 ifeq ($(LOCAL_APPLY_CHAT_TEMPLATE),1)
-LOCAL_CHAT_TEMPLATE_ARG := --apply-chat-template
+LOCAL_CHAT_TEMPLATE_ARG := --local-apply-chat-template
 endif
 
 .PHONY: run gemini Qwen3-vl-vision Qwen2.5-3b-coder Qwen2.5-3b-coder-highlight local-highlight repair
@@ -114,26 +115,37 @@ Qwen2.5-3b-coder-highlight:
 local-highlight:
 	@test -n "$(LOCAL_BASE_MODEL)" || (echo "Set LOCAL_BASE_MODEL=/path/to/base_model"; exit 1)
 	@test -n "$(LOCAL_PROJECTOR_CKPT)" || (echo "Set LOCAL_PROJECTOR_CKPT=/path/to/projector_checkpoint.pt"; exit 1)
-	$(PYTHON) $(LOCAL_INFER_SCRIPT) \
+	$(PYTHON) $(SCRIPT) --mode std \
 		--prompts-csv $(LOCAL_PROMPTS_CSV) \
 		--pre-code-dir $(LOCAL_PRE_CODE_DIR) \
+		--cop-pre-code-dir /home/baiyixue/project/flowcad/data/pre_code_cop \
+		--full-pre-code-dir /home/baiyixue/project/flowcad/data/pre_code \
+		--meta-csv /home/baiyixue/project/flowcad/data/data_indication_out.csv \
+		--bool-csv /home/baiyixue/project/flowcad/data/bool.csv \
+		--out-root /data/baiyixue/CAD/inference_result/local_highlight_eval \
+		--gt-image-dir /data/baiyixue/CAD/screenshots \
+		--gt-single-step-dir /data/baiyixue/CAD/step_files \
+		--op-orient-dir /data/baiyixue/CAD/op_oriented_step \
+		--dedup-csv /home/baiyixue/project/flowcad/data/dedup.csv \
+		--gt-edges-dir /home/baiyixue/project/flowcad/data/gt_edges_json \
 		--embed-dir $(STAGE2_EMBED_DIR) \
-		--out-jsonl $(LOCAL_OUT_JSONL) \
 		--split-json $(LOCAL_SPLIT_JSON) \
 		--split-key $(LOCAL_SPLIT_KEY) \
-		--base-model $(LOCAL_BASE_MODEL) \
-		$(LOCAL_LORA_ARG) \
-		--projector-checkpoint $(LOCAL_PROJECTOR_CKPT) \
-		--mode $(LOCAL_MODE) \
-		--devices $(LOCAL_DEVICES) \
-		--batch-size $(LOCAL_BATCH_SIZE) \
 		--limit $(LOCAL_LIMIT) \
-		--max-new-tokens $(LOCAL_MAX_NEW_TOKENS) \
-		--max-input-tokens $(LOCAL_MAX_INPUT_TOKENS) \
-		--max-model-len $(LOCAL_MAX_MODEL_LEN) \
-		--attn-impl $(LOCAL_ATTN_IMPL) \
-		--precision $(LOCAL_PRECISION) \
-		$(LOCAL_CHAT_TEMPLATE_ARG)
+		--gen-mode local-highlight \
+		--provider local \
+		--highlight-embedding \
+		--local-base-model $(LOCAL_BASE_MODEL) \
+		--local-lora-adapter "$(LOCAL_LORA_ADAPTER)" \
+		--local-projector-ckpt $(LOCAL_PROJECTOR_CKPT) \
+		--local-devices $(LOCAL_DEVICES) \
+		--local-max-new-tokens $(LOCAL_MAX_NEW_TOKENS) \
+		--local-max-input-tokens $(LOCAL_MAX_INPUT_TOKENS) \
+		--local-max-model-len $(LOCAL_MAX_MODEL_LEN) \
+		--local-attn-impl $(LOCAL_ATTN_IMPL) \
+		--local-precision $(LOCAL_PRECISION) \
+		$(LOCAL_CHAT_TEMPLATE_ARG) \
+		--nproc $(LOCAL_NPROC)
 
 # ===== 修正模式 =====
 repair:
