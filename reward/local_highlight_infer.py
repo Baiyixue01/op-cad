@@ -217,7 +217,7 @@ class LocalGenerator:
                 hidden,
                 args.num_soft_tokens,
             ).to(device=self.device, dtype=self.dtype)
-            payload = torch.load(args.projector_checkpoint, map_location=self.device)
+            payload = torch.load(args.projector_checkpoint, map_location=self.device, weights_only=False)
             state_dict = payload["projector"] if isinstance(payload, dict) and "projector" in payload else payload
             self.projector.load_state_dict(state_dict)
             self.projector.eval()

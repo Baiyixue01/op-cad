@@ -9,9 +9,9 @@ LOCAL_INFER_SCRIPT := /home/baiyixue/project/op-cad/reward/local_highlight_infer
 STAGE2_EMBED_DIR := /home/baiyixue/project/jepa-cad-stage2-train/stage2_code_decoder/outputs/embeddings/gt
 
 # Local highlight-embedding ablation. Override these on the make command line.
-LOCAL_BASE_MODEL ?=
+LOCAL_BASE_MODEL ?= /data/baiyixue/inference_model/Qwen2.5-Coder-3B-Instruct-q2-stage2
 LOCAL_LORA_ADAPTER ?=
-LOCAL_PROJECTOR_CKPT ?=
+LOCAL_PROJECTOR_CKPT ?= /home/baiyixue/project/jepa-cad-stage2-train/stage2_code_decoder/outputs/stage2_qwen25_coder_q2_gt_embed/checkpoints/latest.pt
 LOCAL_MODE ?= both
 LOCAL_DEVICES ?= cuda:0
 LOCAL_BATCH_SIZE ?= 1
@@ -98,10 +98,10 @@ Qwen2.5-3b-coder-highlight:
 		--prompts-csv /home/baiyixue/project/flowcad/data/prompt.csv \
 		--gt-image-dir /data/baiyixue/CAD/screenshots \
 		--gt-single-step-dir /data/baiyixue/CAD/step_files \
-		--op-orient-dir /data/baiyixue/CAD/op_oriented_step \
+		--op-orient-dir /data/baiyixue/CAD/op_oriented_step \single
 		--dedup-csv /home/baiyixue/project/flowcad/data/dedup.csv \
 		--gt-edges-dir /home/baiyixue/project/flowcad/data/gt_edges_json \
-		--split-json /home/baiyixue/project/flowcad/data/split_result.json \
+		--split-json /home/baiyixue/project/flowcad/data/split_result_filtered.json \
 		--split-key test \
 		--gen-mode api \
 		--provider vllm \
