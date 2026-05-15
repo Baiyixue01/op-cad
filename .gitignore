@@ -11,3 +11,10 @@ un_necessary_data
 *main*
 *result*__pycache__/
 *.pyc
+*result*
+rebuttal.README
+evaluation/utils/extract_acted_bool_op_cases.py
+toy_data.tar
+.vscode/settings.json
+op_split_stats_noise/global_test_noise_partition.csv
+.codex
