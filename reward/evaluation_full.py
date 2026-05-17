@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 import evaluation as ev
+import gt_lookup
 from model_call import call_model as cm
 from model_call.highlight_paths import resolve_highlight_embedding_path
 
@@ -159,7 +160,16 @@ def eval_one(task: Dict[str, object], args) -> Dict[str, object]:
 
     best_row = None
     cand_rows: List[Dict[str, object]] = []
-    _, gt_full = ev.resolve_gt_paths(group_index, args.gt_single_step_dir)
+    gt_info = gt_lookup.resolve_gt_for_group_index(
+        group_index,
+        dedup_csv=args.dedup_csv,
+        gt_single_step_dir=args.gt_single_step_dir,
+        op_orient_dir=args.op_orient_dir,
+        gt_single_pc_dir=args.gt_single_pc_dir,
+        gt_full_pc_dir=args.gt_full_pc_dir,
+    )
+    gt_full = str(gt_info.get("gt_full_path") or "")
+    resolved_group_index = str(gt_info.get("resolved_group_index") or group_index)
 
     for k_idx, item in enumerate(cands):
         code = item.get("code", "") if isinstance(item, dict) else str(item or "")
@@ -182,6 +192,11 @@ def eval_one(task: Dict[str, object], args) -> Dict[str, object]:
         row = {
             "group_id": group_id,
             "group_index": group_index,
+            "gt_query_group_index": group_index,
+            "gt_resolved_group_index": resolved_group_index,
+            "gt_is_duplicate": int(bool(gt_info.get("is_duplicate"))),
+            "gt_dedup_cycle": int(bool(gt_info.get("dedup_cycle"))),
+            "gt_dedup_trace": " -> ".join(str(x) for x in gt_info.get("dedup_trace", []) or []),
             "max_step": task.get("max_step"),
             "num_steps": task.get("num_steps"),
             "k_index": k_idx,

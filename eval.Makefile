@@ -37,7 +37,7 @@ ifeq ($(LOCAL_APPLY_CHAT_TEMPLATE),1)
 LOCAL_CHAT_TEMPLATE_ARG := --local-apply-chat-template
 endif
 
-.PHONY: run gemini Qwen3-vl-vision Qwen2.5-3b-coder Qwen2.5-3b-coder-highlight Qwen2.5-3b-coder-highlight-full build-full-sequence-test local-highlight repair
+.PHONY: run gemini Qwen3-vl-vision Qwen2.5-3b-coder Qwen2.5-3b-coder-highlight Qwen2.5-3b-coder-highlight-full build-full-sequence-test full-gt-lookup local-highlight repair
 
 # 用脚本默认参数
 run:
@@ -116,6 +116,7 @@ FULL_SEQUENCE_JSONL ?= /data/baiyixue/CAD/inference_result/full_sequence_test.js
 FULL_SEQUENCE_OUT ?= /data/baiyixue/CAD/inference_result/full_sequence_eval
 FULL_SEQUENCE_LIMIT ?= 0
 FULL_SEQUENCE_K ?= 1
+GT_QUERY_GROUP_INDEX ?=
 
 build-full-sequence-test:
 	$(PYTHON) /home/baiyixue/project/op-cad/reward/build_full_sequence_test.py \
@@ -125,6 +126,14 @@ build-full-sequence-test:
 		--pre-code-cop-dir /home/baiyixue/project/flowcad/data/pre_code_cop \
 		--out-jsonl $(FULL_SEQUENCE_JSONL) \
 		--limit $(FULL_SEQUENCE_LIMIT)
+
+full-gt-lookup:
+	@test -n "$(GT_QUERY_GROUP_INDEX)" || (echo "Set GT_QUERY_GROUP_INDEX=00002_index_1/step0"; exit 1)
+	$(PYTHON) /home/baiyixue/project/op-cad/reward/gt_lookup.py \
+		--group-index $(GT_QUERY_GROUP_INDEX) \
+		--dedup-csv /home/baiyixue/project/flowcad/data/dedup.csv \
+		--gt-single-step-dir /data/baiyixue/CAD/step_files \
+		--op-orient-dir /data/baiyixue/CAD/op_oriented_step
 
 Qwen2.5-3b-coder-highlight-full:
 	$(PYTHON) /home/baiyixue/project/op-cad/reward/evaluation_full.py \
