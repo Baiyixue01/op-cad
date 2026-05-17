@@ -24,6 +24,13 @@ STEP_RE = re.compile(r"^(?P<base>.+)/step(?P<step>\d+)$")
 HEADER_RE = re.compile(r"^\s*##\s*step(?P<step>\d+)\s*:\s*(?P<instruction>.*?)\s*$")
 
 
+def clean_instruction(text: object) -> str:
+    value = "" if text is None else str(text).strip()
+    if value.lower() in {"nan", "none", "null"}:
+        return ""
+    return value
+
+
 def parse_group_index(group_index: str) -> Tuple[str, int]:
     m = STEP_RE.match(str(group_index).strip())
     if not m:
@@ -56,7 +63,7 @@ def parse_step_headers(src: str) -> Dict[int, str]:
     for line in src.splitlines():
         m = HEADER_RE.match(line)
         if m:
-            out[int(m.group("step"))] = m.group("instruction").strip()
+            out[int(m.group("step"))] = clean_instruction(m.group("instruction"))
     return out
 
 
@@ -71,7 +78,7 @@ def prompt_map(prompt_csv: Path) -> Dict[str, Dict[str, str]]:
     for _, r in df.iterrows():
         gid = str(r["group_index"]).strip()
         rows[gid] = {
-            "prompt_text": "" if pd.isna(r["prompt_text"]) else str(r["prompt_text"]),
+            "prompt_text": "" if pd.isna(r["prompt_text"]) else clean_instruction(r["prompt_text"]),
             "op": "" if pd.isna(r["op"]) else str(r["op"]).strip(),
         }
     return rows
@@ -81,6 +88,8 @@ def iter_tasks(
     split_ids: Iterable[str],
     prompts: Dict[str, Dict[str, str]],
     pre_code_dir: Path,
+    *,
+    drop_incomplete: bool = False,
 ) -> Iterable[Dict[str, object]]:
     max_by_base: Dict[str, int] = {}
     for gid in split_ids:
@@ -102,7 +111,7 @@ def iter_tasks(
             step_gid = f"{base}/step{step}"
             meta = prompts.get(step_gid, {})
             header_text = header_instructions.get(step, "")
-            prompt_text = meta.get("prompt_text") or header_text
+            prompt_text = clean_instruction(meta.get("prompt_text") or header_text)
             steps.append(
                 {
                     "step": step,
@@ -113,6 +122,12 @@ def iter_tasks(
                 }
             )
 
+        missing_instruction_steps = [
+            int(item["step"]) for item in steps if not clean_instruction(item.get("instruction", ""))
+        ]
+        if drop_incomplete and missing_instruction_steps:
+            continue
+
         yield {
             "group_id": base,
             "group_index": gid,
@@ -120,6 +135,7 @@ def iter_tasks(
             "pre_code_path": str(path),
             "pre_code_exists": path.exists(),
             "num_steps": len(steps),
+            "missing_instruction_steps": missing_instruction_steps,
             "instructions": steps,
         }
 
@@ -132,6 +148,11 @@ def main() -> None:
     ap.add_argument("--pre-code-cop-dir", required=True)
     ap.add_argument("--out-jsonl", required=True)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument(
+        "--drop-incomplete",
+        action="store_true",
+        help="Drop full-sequence tasks if any intermediate step has empty/nan instruction text.",
+    )
     args = ap.parse_args()
 
     split_ids = load_split_ids(Path(args.split_json), args.split_key)
@@ -141,7 +162,12 @@ def main() -> None:
 
     n = 0
     with out_path.open("w", encoding="utf-8") as f:
-        for task in iter_tasks(split_ids, prompts, Path(args.pre_code_cop_dir)):
+        for task in iter_tasks(
+            split_ids,
+            prompts,
+            Path(args.pre_code_cop_dir),
+            drop_incomplete=args.drop_incomplete,
+        ):
             f.write(json.dumps(task, ensure_ascii=False) + "\n")
             n += 1
             if args.limit and n >= args.limit:

@@ -116,7 +116,12 @@ FULL_SEQUENCE_JSONL ?= /data/baiyixue/CAD/inference_result/full_sequence_test.js
 FULL_SEQUENCE_OUT ?= /data/baiyixue/CAD/inference_result/full_sequence_eval
 FULL_SEQUENCE_LIMIT ?= 0
 FULL_SEQUENCE_K ?= 1
+FULL_SEQUENCE_DROP_INCOMPLETE ?= 1
 GT_QUERY_GROUP_INDEX ?=
+
+ifeq ($(FULL_SEQUENCE_DROP_INCOMPLETE),1)
+FULL_SEQUENCE_DROP_INCOMPLETE_ARG := --drop-incomplete
+endif
 
 build-full-sequence-test:
 	$(PYTHON) /home/baiyixue/project/op-cad/reward/build_full_sequence_test.py \
@@ -125,7 +130,8 @@ build-full-sequence-test:
 		--split-key test \
 		--pre-code-cop-dir /home/baiyixue/project/flowcad/data/pre_code_cop \
 		--out-jsonl $(FULL_SEQUENCE_JSONL) \
-		--limit $(FULL_SEQUENCE_LIMIT)
+		--limit $(FULL_SEQUENCE_LIMIT) \
+		$(FULL_SEQUENCE_DROP_INCOMPLETE_ARG)
 
 full-gt-lookup:
 	@test -n "$(GT_QUERY_GROUP_INDEX)" || (echo "Set GT_QUERY_GROUP_INDEX=00002_index_1/step0"; exit 1)
