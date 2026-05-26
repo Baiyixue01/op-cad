@@ -1,23 +1,31 @@
 # Op-CAD
 
-This repository is for the paper **Op-CAD: Benchmarking and Investigating Operation-oriented CAD Generation**.
+Official repository for the paper **Op-CAD: Benchmarking and Investigating Operation-oriented CAD Generation**.
 
 ## Overview
 
-`Op-CAD` is the project repository for the paper and will host the open-source components used for operation-oriented CAD generation research.
+Op-CAD studies operation-oriented CAD generation and aims to support benchmarking, analysis, and reproducible evaluation for CAD modeling workflows.
 
-## Open-source TODO
+This repository is being prepared as the public project page for the paper. Code, data assets, and evaluation components will be released incrementally as they are cleaned, documented, and packaged for open-source use.
 
-We plan to open-source the following components incrementally:
+## Release Plan
+
+The following components are planned for public release:
 
 - [ ] Data processing pipeline
-- [ ] Dataset documentation and release instructions
-- [ ] Training and evaluation manifests
-- [ ] Test and benchmarking code
-- [ ] Baseline scripts and reproducible experiment configs
+- [ ] Dataset documentation
+- [ ] Dataset release instructions
+- [ ] Training manifests
+- [ ] Evaluation and test code
+- [ ] Baseline scripts
+- [ ] Reproducible experiment configurations
 
-## Status
+## Current Status
 
-This repository is currently being prepared for public release.
+This repository currently serves as a placeholder project page for the paper.
 
-More materials will be added as they are cleaned up and organized for open-source publication.
+Detailed code, dataset access instructions, and evaluation scripts will be added in subsequent updates.
+
+## Citation
+
+Citation information will be added after the paper metadata is finalized.
