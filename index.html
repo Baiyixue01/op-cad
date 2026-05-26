@@ -11,164 +11,229 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Newsreader:opsz,wght@6..72,500;6..72,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="page-shell">
-      <header class="hero">
-        <div class="hero-copy centered">
-          <p class="eyebrow">Project Page</p>
-          <h1>Op-CAD: Benchmarking and Investigating Operation-oriented CAD Generation</h1>
-          <p class="summary centered-text">
-            Op-CAD is a research project on operation-oriented CAD generation,
-            designed to support benchmarking, analysis, and reproducible
-            evaluation for CAD modeling workflows.
-          </p>
-          <div class="resource-actions">
-            <a class="button primary" href="#paper">arXiv</a>
-            <a class="button secondary" href="#data">Data</a>
-            <a class="button secondary" href="#model">Model</a>
-            <a class="button secondary" href="https://github.com/Baiyixue01/op-cad">Code</a>
-          </div>
-          <p class="note">
-            arXiv, dataset, and model links will be updated as the corresponding
-            public artifacts are finalized.
-          </p>
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">OP</span>
+          <span class="brand-text">Op-CAD</span>
         </div>
+        <nav class="topnav">
+          <a href="#overview">Overview</a>
+          <a href="#resources">Resources</a>
+          <a href="#release-plan">Roadmap</a>
+          <a href="https://github.com/Baiyixue01/op-cad">GitHub</a>
+        </nav>
       </header>
 
       <main>
-        <section class="section narrative">
-          <div class="section-heading">
-            <p class="eyebrow">Overview</p>
-            <h2>About the project</h2>
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="kicker">Project Page / CAD Benchmark</p>
+            <h1>Op-CAD</h1>
+            <p class="hero-title">
+              Benchmarking and Investigating Operation-oriented CAD Generation
+            </p>
+            <p class="hero-summary">
+              A project page for operation-oriented CAD generation research,
+              focused on benchmark construction, evaluation methodology, and
+              reproducible release of data, models, and code assets.
+            </p>
+            <div class="hero-actions">
+              <a class="button primary" href="#paper">arXiv</a>
+              <a class="button secondary" href="#data">Data</a>
+              <a class="button secondary" href="#model">Model</a>
+              <a class="button secondary" href="https://github.com/Baiyixue01/op-cad">Code</a>
+            </div>
+            <p class="hero-note">
+              Public links for paper, dataset, and model release will be updated
+              here as soon as each artifact is ready.
+            </p>
           </div>
-          <div class="narrative-grid">
+
+          <aside class="hero-panel">
+            <div class="blueprint">
+              <div class="bp-header">
+                <span>OP-CAD</span>
+                <span>PROJECT SHEET</span>
+              </div>
+              <div class="bp-grid">
+                <div class="bp-box wide">
+                  <span class="bp-label">Theme</span>
+                  <strong>Operation-oriented CAD generation</strong>
+                </div>
+                <div class="bp-box">
+                  <span class="bp-label">Scope</span>
+                  <strong>Benchmark</strong>
+                </div>
+                <div class="bp-box">
+                  <span class="bp-label">Mode</span>
+                  <strong>Public release</strong>
+                </div>
+                <div class="bp-box">
+                  <span class="bp-label">Artifacts</span>
+                  <strong>Data / Model / Code</strong>
+                </div>
+                <div class="bp-box">
+                  <span class="bp-label">Status</span>
+                  <strong>Project page live</strong>
+                </div>
+              </div>
+              <div class="bp-footer">
+                <span>Release plan in progress</span>
+                <span>Revision 0.1</span>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="section intro" id="overview">
+          <div class="section-head">
+            <p class="kicker">Overview</p>
+            <h2>Research home for the paper</h2>
+          </div>
+          <div class="intro-grid">
             <p>
-              This website serves as the public landing page for the paper
+              This page is the public project homepage for
               <em>Op-CAD: Benchmarking and Investigating Operation-oriented CAD
               Generation</em>.
             </p>
             <p>
-              The goal is to provide a stable project home for future releases of
-              processing pipelines, dataset documentation, models, training
-              manifests, and benchmarking code.
+              It is intended to host a stable set of links for the paper,
+              dataset, model release, training manifests, and evaluation code.
+            </p>
+            <p>
+              The design language follows a CAD-oriented engineering style rather
+              than a generic landing page, with emphasis on structure, clarity,
+              and release status.
             </p>
           </div>
         </section>
 
-        <section class="section resource-section">
-          <div class="section-heading">
-            <p class="eyebrow">Resources</p>
-            <h2>Public entry points</h2>
+        <section class="section resources" id="resources">
+          <div class="section-head">
+            <p class="kicker">Resources</p>
+            <h2>Public access points</h2>
           </div>
           <div class="resource-grid">
             <article class="resource-card" id="paper">
-              <span class="resource-tag">Paper</span>
+              <div class="resource-top">
+                <span class="resource-tag">Paper</span>
+                <span class="resource-state pending">Pending</span>
+              </div>
               <h3>arXiv</h3>
               <p>
-                The paper link will be added here after the public arXiv entry is
+                The public paper URL will be linked here once the arXiv entry is
                 available.
               </p>
-              <a class="inline-link" href="#paper">Coming soon</a>
+              <a class="resource-link" href="#paper">Coming soon</a>
             </article>
+
             <article class="resource-card" id="data">
-              <span class="resource-tag">Dataset</span>
+              <div class="resource-top">
+                <span class="resource-tag">Dataset</span>
+                <span class="resource-state pending">Pending</span>
+              </div>
               <h3>Data</h3>
               <p>
-                Dataset documentation, release notes, and access instructions will
-                be linked from this section.
+                Dataset structure, access instructions, and release notes will be
+                published here.
               </p>
-              <a class="inline-link" href="#data">Coming soon</a>
+              <a class="resource-link" href="#data">Coming soon</a>
             </article>
+
             <article class="resource-card" id="model">
-              <span class="resource-tag">Weights</span>
+              <div class="resource-top">
+                <span class="resource-tag">Weights</span>
+                <span class="resource-state pending">Pending</span>
+              </div>
               <h3>Model</h3>
               <p>
-                Public checkpoints or model access instructions will be linked here
-                when the release package is ready.
+                Public checkpoints or model access instructions will be linked
+                here after packaging.
               </p>
-              <a class="inline-link" href="#model">Coming soon</a>
+              <a class="resource-link" href="#model">Coming soon</a>
             </article>
-            <article class="resource-card">
-              <span class="resource-tag">Repository</span>
+
+            <article class="resource-card live">
+              <div class="resource-top">
+                <span class="resource-tag">Repository</span>
+                <span class="resource-state live-state">Live</span>
+              </div>
               <h3>Code</h3>
               <p>
-                The public repository already hosts the project page and will be
-                expanded with code and evaluation artifacts.
+                The repository currently hosts the project homepage and will be
+                expanded with release artifacts.
               </p>
-              <a class="inline-link" href="https://github.com/Baiyixue01/op-cad">Open repository</a>
+              <a class="resource-link" href="https://github.com/Baiyixue01/op-cad">Open repository</a>
             </article>
           </div>
         </section>
 
-        <section class="section" id="release-plan">
-          <div class="section-heading">
-            <p class="eyebrow">Roadmap</p>
-            <h2>Open-source release plan</h2>
+        <section class="section roadmap-section" id="release-plan">
+          <div class="section-head">
+            <p class="kicker">Roadmap</p>
+            <h2>Release checklist</h2>
           </div>
-          <div class="roadmap">
+          <div class="roadmap-list">
             <article class="roadmap-item">
               <span class="roadmap-index">01</span>
-              <h3>Data Processing Pipeline</h3>
-              <p>
-                Scripts and intermediate processing logic for preparing the
-                operation-oriented CAD data pipeline.
-              </p>
+              <div>
+                <h3>Data processing pipeline</h3>
+                <p>Preparation scripts and intermediate processing logic for benchmark construction.</p>
+              </div>
             </article>
             <article class="roadmap-item">
               <span class="roadmap-index">02</span>
-              <h3>Dataset Documentation</h3>
-              <p>
-                Dataset structure, release notes, usage rules, and access
-                instructions for public readers.
-              </p>
+              <div>
+                <h3>Dataset documentation</h3>
+                <p>Format description, access rules, release instructions, and usage notes.</p>
+              </div>
             </article>
             <article class="roadmap-item">
               <span class="roadmap-index">03</span>
-              <h3>Training Manifests</h3>
-              <p>
-                Manifests and configuration artifacts required to reproduce the
-                training setup used in the paper.
-              </p>
+              <div>
+                <h3>Training manifests</h3>
+                <p>Experiment manifests and configuration files used for reported runs.</p>
+              </div>
             </article>
             <article class="roadmap-item">
               <span class="roadmap-index">04</span>
-              <h3>Evaluation and Test Code</h3>
-              <p>
-                Benchmarking scripts, test-time execution paths, and evaluation
-                procedures for the reported experiments.
-              </p>
+              <div>
+                <h3>Evaluation and test code</h3>
+                <p>Benchmark execution, testing paths, and evaluation procedures for released baselines.</p>
+              </div>
             </article>
             <article class="roadmap-item">
               <span class="roadmap-index">05</span>
-              <h3>Baselines and Configs</h3>
-              <p>
-                Baseline scripts and reproducible experiment configurations for
-                downstream comparison and ablation studies.
-              </p>
+              <div>
+                <h3>Baselines and reproducible configs</h3>
+                <p>Reference scripts and reproducible settings for comparison and ablation studies.</p>
+              </div>
             </article>
           </div>
         </section>
 
-        <section class="section split-band">
-          <div class="split-card">
-            <p class="eyebrow">Repository</p>
-            <h2>Current status</h2>
+        <section class="section footer-band">
+          <div class="status-card">
+            <p class="kicker">Status</p>
+            <h2>Homepage ready for citation</h2>
             <p>
-              This project page is public and intended to be cited as the project
-              homepage while release artifacts are being packaged.
+              This page can be used as the project homepage link in the paper
+              while the remaining public artifacts are being finalized.
             </p>
           </div>
-          <div class="split-card accent">
-            <p class="eyebrow">Citation</p>
-            <h2>Paper metadata</h2>
+          <div class="status-card alt">
+            <p class="kicker">Citation</p>
+            <h2>Metadata placeholder</h2>
             <p>
-              Citation details, links, and additional materials will be added
-              once the paper metadata is finalized.
+              Citation text, BibTeX, and external links will be added when the
+              final paper metadata is available.
             </p>
           </div>
         </section>
