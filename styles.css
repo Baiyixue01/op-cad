@@ -47,14 +47,10 @@ body::before {
 }
 
 .hero {
-  display: grid;
-  grid-template-columns: 1.25fr 0.95fr;
-  gap: 24px;
-  align-items: stretch;
+  display: block;
 }
 
 .hero-copy,
-.hero-panel,
 .section,
 .split-card {
   backdrop-filter: blur(10px);
@@ -64,16 +60,12 @@ body::before {
 }
 
 .hero-copy {
-  padding: 44px;
+  padding: 56px 44px;
   border-radius: 32px;
 }
 
-.hero-panel {
-  padding: 24px;
-  border-radius: 32px;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+.hero-copy.centered {
+  text-align: center;
 }
 
 .eyebrow {
@@ -125,15 +117,27 @@ h3 {
 }
 
 .summary {
-  margin: 24px 0 0;
+  margin: 24px auto 0;
   max-width: 650px;
 }
 
-.hero-actions {
+.centered-text {
+  text-align: center;
+}
+
+.resource-actions {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
+  justify-content: center;
   margin-top: 30px;
+}
+
+.note {
+  margin: 16px auto 0;
+  max-width: 620px;
+  color: var(--muted);
+  line-height: 1.7;
 }
 
 .button {
@@ -163,15 +167,8 @@ h3 {
   background: rgba(255, 255, 255, 0.52);
 }
 
-.hero-card {
-  border-radius: 24px;
-  padding: 22px;
-  background: linear-gradient(180deg, rgba(180, 81, 45, 0.08), rgba(241, 200, 109, 0.16));
-  border: 1px solid rgba(180, 81, 45, 0.16);
-}
-
-.card-label,
-.signal-box span {
+.signal-box span,
+.resource-tag {
   display: block;
   font-size: 0.78rem;
   text-transform: uppercase;
@@ -179,25 +176,6 @@ h3 {
   color: var(--accent-deep);
   margin-bottom: 8px;
   font-weight: 800;
-}
-
-.hero-card strong,
-.signal-box strong {
-  display: block;
-  font-size: 1.2rem;
-}
-
-.signal-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-
-.signal-box {
-  padding: 18px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.65);
-  border: 1px solid var(--line);
 }
 
 main {
@@ -218,6 +196,29 @@ main {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+}
+
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.resource-card {
+  padding: 22px 20px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--line);
+}
+
+.resource-card p {
+  margin-bottom: 18px;
+}
+
+.inline-link {
+  color: var(--accent-deep);
+  font-weight: 800;
+  text-decoration: none;
 }
 
 .roadmap {
@@ -277,6 +278,7 @@ main {
 @media (max-width: 980px) {
   .hero,
   .narrative-grid,
+  .resource-grid,
   .roadmap,
   .split-band {
     grid-template-columns: 1fr;
@@ -301,11 +303,7 @@ main {
     border-radius: 24px;
   }
 
-  .signal-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-actions {
+  .resource-actions {
     flex-direction: column;
   }
 
