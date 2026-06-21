@@ -5,8 +5,8 @@ OP-CAD is a CAD operation planning and repair benchmark for generating CadQuery 
 This repository contains the evaluation, reward, prompt construction, and inference scripts. Large assets are published separately:
 
 - Project page: https://baiyixue01.github.io/op-cad/
-- Model: https://huggingface.co/Baiyixue01/op-llama-8b
-- Dataset: https://huggingface.co/datasets/Baiyixue01/op-cad
+- Model: https://huggingface.co/Biabai/op-llama-8b
+- Dataset: https://huggingface.co/datasets/Biabai/op-cad
 - Data rendering code: https://github.com/Baiyixue01/data_render
 
 ## Repository Layout
@@ -35,7 +35,7 @@ CadQuery and OpenCascade rendering can require system OpenGL libraries on Linux.
 Download the dataset from Hugging Face:
 
 ```bash
-huggingface-cli download Baiyixue01/op-cad --repo-type dataset --local-dir data/op-cad
+huggingface-cli download Biabai/op-cad --repo-type dataset --local-dir data/op-cad
 ```
 
 The public dataset contains:
@@ -52,7 +52,7 @@ For legacy scripts that expect local paths, either set symbolic links into `data
 Download the OP-CAD Llama model:
 
 ```bash
-huggingface-cli download Baiyixue01/op-llama-8b --local-dir models/op-llama-8b
+huggingface-cli download Biabai/op-llama-8b --local-dir models/op-llama-8b
 ```
 
 Serve it with vLLM:
@@ -101,4 +101,3 @@ export OP_CAD_HTTP_API_KEY=...
 ## Citation
 
 If you use OP-CAD, cite the project page or paper associated with the release.
-

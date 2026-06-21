@@ -24,7 +24,7 @@
     "base_url": "http://localhost:8000/v1/chat/completions",
     "model": "op-llama-8b",
     "default_key": "local",
-    "tokenizer_model": "Baiyixue01/op-llama-8b",
+    "tokenizer_model": "Biabai/op-llama-8b",
     "endpoints": {
       "local": {
         "base_url": "http://localhost:8000/v1/chat/completions",
