@@ -18,3 +18,12 @@ toy_data.tar
 .vscode/settings.json
 op_split_stats_noise/global_test_noise_partition.csv
 .codex
+*.ipynb
+*.step
+*.stl
+*.tar
+*.tar.gz
+*.zip
+.env
+outputs/
+models/

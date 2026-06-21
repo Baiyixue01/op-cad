@@ -1,0 +1,14 @@
+cadquery
+huggingface_hub
+numpy
+openai
+pandas
+pillow
+pyvista
+scipy
+torch
+torchvision
+tqdm
+transformers
+trimesh
+vllm

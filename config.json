@@ -2,306 +2,55 @@
   "gen": {
     "mode": "api",
     "k": 5,
-    "temperature": 1.0,
+    "temperature": 0.7,
     "timeout_s": 1800,
     "greedy": false,
     "top_p": 1.0,
     "top_k": 40,
     "repetition_penalty": 1.0,
-    "presence_penalty": 2.0,
+    "presence_penalty": 0.0,
     "out_seq_length": 20000
   },
   "openai": {
     "enabled": false,
-    "api_key": "sk-aRNjCdYIfskt8s7URToxDk6T0Iq89HiX1hIZnI6VMoKhYQZu",     
-    "base_url": "https://api.xinyun.ai/v1",
-    "model": "gemini-2.5-pro",
-    "organization": "",          
-    "project": ""               
+    "api_key": "${OPENAI_API_KEY}",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4o",
+    "organization": "",
+    "project": ""
   },
   "vllm": {
     "enabled": true,
     "base_url": "http://localhost:8000/v1/chat/completions",
-    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-    "default_key": "default",
-    "tokenizer_model": "/data/baiyixue/inference_model/Qwen3-8B-coop-sft-full-260326", 
+    "model": "op-llama-8b",
+    "default_key": "local",
+    "tokenizer_model": "Baiyixue01/op-llama-8b",
     "endpoints": {
-      "port-1": {
-        "base_url": "http://localhost:8003/v1/completions",
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "headers": {}
-      },
-      "port0": {
-        "base_url": "http://localhost:8002/v1/completions",
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "headers": {}
-      },
-      "port1": {
-        "base_url": "http://localhost:8001/v1/chat/completions",
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "headers": {}
-      },
-      "port2": {
-        "base_url": "http://localhost:8001/v1/completions",
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "headers": {}
-      },
-      "port3": {
-        "base_url": "http://localhost:8003/v1/chat/completions",
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "headers": {}
-      },
-      "port4": {
-        "base_url": "http://localhost:8002/v1/chat/completions",
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "headers": {}
-      },
-      "port5": {
-        "base_url": "http://localhost:8004/v1/chat/completions",
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "local": {
+        "base_url": "http://localhost:8000/v1/chat/completions",
+        "model": "op-llama-8b",
         "headers": {}
       }
     },
     "headers": {
-      "Authorization": "Bearer YOUR_API_KEY_IF_NEEDED",
       "Content-Type": "application/json"
     }
   },
   "http": {
-    "enabled": true,
-    "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-    "model": "Qwen/Qwen3-8B",
+    "enabled": false,
+    "base_url": "${OP_CAD_HTTP_BASE_URL}",
+    "model": "${OP_CAD_HTTP_MODEL}",
     "headers": {
       "Content-Type": "application/json",
-      "Authorization": "Bearer sk-ygkgaibmqiasjapiiabmowrehdolaridtjyvnrraikwtphbu"
+      "Authorization": "Bearer ${OP_CAD_HTTP_API_KEY}"
     }
-    
   },
-  "http_pool": [
-    {
-      "name": "sf-Z",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-uzwgvqreimoacsxqeounnpxbdlxkvwcoazsvaheybqqkxayv"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-A",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-ygkgaibmqiasjapiiabmowrehdolaridtjyvnrraikwtphbu"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-B",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-pgjvcviqzwieiykvcjuelqifnetmfatavjatokbhoxlhamsz"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-C",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-xogomnnfweraisrcixdplolxgeblqacglcbfuprsbkjqqnpt"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-D",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-romtdrtnnqtszfotfclinalrrydfmwvjcfalehwhfusidjmc"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-E",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-qqmbxqagqfpqsgiypdcpodzmcqlygmssozxrzhwohukjimcw"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-F",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-cnnxkqbhqipkkiknxzwuuahzdnbhowroqjwagdtljnhljhoz"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-G",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-iblropkxnusjcdxfxehmwelsgjhmssumzvgtjpychuvajxmy"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-H",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-pefrrdukdmbaqqdrgknnvulcvjglyhrrceqargmbawxdyvqd"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-I",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-uhbenfbirmiuzoxyxpejrnmhwjtjdskgpelilgfnzjmdhxbb"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-G",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-gqsberhcqormgdwrybdkzqlfutsnosqxisgtvmucuydoysqk"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-K",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-zpdktwzybyddmncjnpcyzfqejamvmrdstcoahooiuzobwgoj"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-L",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-qfjpfjnbpesystjamtnpyyhxbmkhoaeamkdxjencccboxuzt"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-M",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-ybqjhtbjsmgzbosjendajwsfnugtxizokiccajlxzvnpfrxu"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-        {
-      "name": "sf-N",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-djccmybokpursgpiqufvplxusjhcbyggpuoawmvevwbxvgcd"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-      {
-      "name": "sf-O",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-pkydrbaafmgodognmdmromknhguakpkzgzljncbqmkoctkiq"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-P",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-twxroumcsahjlskyuukzgehkyorlrsbqgujlewqrpqkefjmf"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-Q",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-xqlrdlgabtrhhdwopauizlaemszwbewasoxprdgbcnhmmntp"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-R",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-zcjpzdeijtkdsdajndyfivumignkbnylamqyullkhhfeiguv"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-S",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-wvuhjyoppchbgsutfxnosigtboeqiqgujlsymicqswhokpow"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    },
-    {
-      "name": "sf-T",
-      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer sk-winwwxelukwhykbfgpslcpuncrezrowwbkdyzhxhnvyokahh"
-      },
-      "model": "Qwen/QwQ-32B",
-      "timeout": 120
-    }
-  ],
-  "siliconflow": {
-    "enabled": true,
-    "base_url": "https://api.siliconflow.cn/v1/chat/completions",
-    "model": "Qwen/Qwen3-8B",
-    "headers": {
-    "Authorization": "Bearer sk-ygkgaibmqiasjapiiabmowrehdolaridtjyvnrraikwtphbu",
-    "Content-Type": "application/json"
-}
-  },
-  "paths": {
-    "pre_code_dir": "/path/to/previous_codes",    
-    "prompts_csv": "/path/to/prompts.csv",
-    "out_csv": "/path/to/out_eval.csv",
-    "tmp_dir": "./_tmp_eval"
+  "http_pool": [],
+  "highlight_embedding": {
+    "enabled": false,
+    "path": "${OP_CAD_HIGHLIGHT_EMBEDDING_PATH}",
+    "num_soft_tokens": 16,
+    "max_new_tokens": 2048,
+    "max_input_tokens": 32768
   }
 }
