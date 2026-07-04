@@ -2,50 +2,202 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>OP-CAD</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="index,follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Op-CAD: Operation-Level CAD Dataset & Modeling</title>
+  <!-- 引入 Tailwind CSS 极速版 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 引入字体与图标 -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- 引入 Google 3D 模型渲染组件 -->
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
   <style>
-    body { max-width: 860px; margin: 6vh auto; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif; padding: 0 18px; color: #1f2933; }
-    h1 { margin-bottom: 0.2em; }
-    .muted { color: #5f6b7a; }
-    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 24px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: #fff; }
-    .card h2 { font-size: 18px; margin: 0 0 8px; }
-    a { color: #0b63ce; text-decoration: none; }
-    code { background: #f3f4f6; border-radius: 4px; padding: 1px 4px; }
+    body { font-family: 'Inter', sans-serif; }
+    code, pre { font-family: 'JetBrains Mono', monospace; }
   </style>
 </head>
-<body>
-  <h1>OP-CAD</h1>
-  <p class="muted">Operation-oriented CAD generation resources: code, model, rendering pipeline, and dataset.</p>
+<body class="bg-slate-50 text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
 
-  <div class="grid">
-    <section class="card">
-      <h2>Code</h2>
-      <p>Main evaluation and inference repository.</p>
-      <p><a href="https://github.com/Baiyixue01/op-cad" target="_blank" rel="noopener">github.com/Baiyixue01/op-cad</a></p>
-    </section>
+  <!-- ================= 顶部导航 ================= -->
+  <nav class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200/80">
+    <div class="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
+      <span class="font-bold text-lg tracking-tight bg-gradient-to-r from-indigo-600 to-blue-600 bg-clip-text text-transparent">Op-CAD Project</span>
+      <div class="flex gap-6 text-sm font-medium text-slate-600">
+        <a href="#abstract" class="hover:text-indigo-600 transition-colors">Abstract</a>
+        <a href="#viewer" class="hover:text-indigo-600 transition-colors">3D Viewer</a>
+        <a href="#highlights" class="hover:text-indigo-600 transition-colors">Dataset</a>
+        <a href="#bibtex" class="hover:text-indigo-600 transition-colors">BibTeX</a>
+      </div>
+    </div>
+  </nav>
 
-    <section class="card">
-      <h2>Data Render</h2>
-      <p>Data construction, CadQuery modeling, and rendering utilities.</p>
-      <p><a href="https://github.com/Baiyixue01/data_render" target="_blank" rel="noopener">github.com/Baiyixue01/data_render</a></p>
-    </section>
+  <!-- ================= Hero 首图区域 ================= -->
+  <header class="max-w-4xl mx-auto pt-16 pb-12 px-6 text-center">
+    <!-- 顶会常用的 Tag Banner -->
+    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-600 text-xs font-semibold uppercase tracking-wider mb-6">
+      <span class="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+      Large-Scale 3D CAD Benchmark
+    </div>
 
-    <section class="card">
-      <h2>Model</h2>
-      <p>OP-Llama-8B model release.</p>
-      <p><a href="https://huggingface.co/Biabai/op-llama-8b" target="_blank" rel="noopener">huggingface.co/Biabai/op-llama-8b</a></p>
-    </section>
+    <!-- 论文标题：强调操作级与大规模 -->
+    <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-slate-900 tracking-tight leading-none mb-6">
+      Op-CAD: A Large-Scale <br class="hidden sm:block"/>
+      <span class="bg-gradient-to-r from-indigo-600 via-blue-600 to-teal-500 bg-clip-text text-transparent">Operation-Level</span> 3D CAD Dataset
+    </h1>
 
-    <section class="card">
-      <h2>Dataset</h2>
-      <p>OP-CAD data shards, point clouds, and metadata.</p>
-      <p><a href="https://huggingface.co/datasets/Biabai/op-cad" target="_blank" rel="noopener">huggingface.co/datasets/Biabai/op-cad</a></p>
-    </section>
-  </div>
+    <!-- 作者列表 (可自行修改链接和名字) -->
+    <div class="flex flex-wrap justify-center gap-x-6 gap-y-2 text-lg font-medium text-slate-700 mb-4">
+      <a href="#" class="hover:text-indigo-600 underline decoration-slate-300 underline-offset-4">Author One</a>
+      <a href="#" class="hover:text-indigo-600 underline decoration-slate-300 underline-offset-4">Author Two</a>
+      <a href="#" class="hover:text-indigo-600 underline decoration-slate-300 underline-offset-4">Author Three</a>
+    </div>
 
-  <p class="muted">Dataset folders include <code>shard_work_shards_op_image</code>, <code>step_files_pc_2048_normalized</code>, <code>op_oriented_step_pc_2048_normalized</code>, and <code>data</code>.</p>
+    <!-- 机构列表 -->
+    <p class="text-sm text-slate-500 font-normal mb-8">
+      Hong Kong University of Science and Technology (Guangzhou)
+    </p>
+
+    <!-- 顶级主页胶囊按钮 (Paper, Code, Dataset, HF) -->
+    <div class="flex flex-wrap justify-center gap-3">
+      <a href="#" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-900 text-white font-medium text-sm shadow-md hover:bg-slate-800 transition-all hover:-translate-y-0.5">
+        <i class="fa-solid fa-file-pdf text-red-400"></i> Paper (PDF)
+      </a>
+      <a href="#" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-900 text-white font-medium text-sm shadow-md hover:bg-slate-800 transition-all hover:-translate-y-0.5">
+        <i class="fa-brands fa-github text-white"></i> Code & Models
+      </a>
+      <a href="#" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-900 text-white font-medium text-sm shadow-md hover:bg-slate-800 transition-all hover:-translate-y-0.5">
+        <i class="fa-solid fa-database text-teal-400"></i> Dataset (128K)
+      </a>
+      <a href="#" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-900 text-white font-medium text-sm shadow-md hover:bg-slate-800 transition-all hover:-translate-y-0.5">
+        <i class="fa-solid fa-laptop-code text-amber-400"></i> Live Demo
+      </a>
+    </div>
+  </header>
+
+  <!-- ================= 3D 交互预览区域 (Teaser) ================= -->
+  <section id="viewer" class="max-w-4xl mx-auto px-6 mb-16">
+    <div class="bg-white p-3 rounded-2xl shadow-xl border border-slate-200/60 relative overflow-hidden">
+      <div class="absolute top-6 left-6 z-10 bg-slate-900/80 backdrop-blur text-white text-xs px-3 py-1.5 rounded-lg border border-white/10 pointer-events-none flex items-center gap-2">
+        <i class="fa-solid fa-cube text-indigo-400"></i> 
+        <span>Interactive Preview (Drag to rotate, scroll to zoom)</span>
+      </div>
+      
+      <!-- model-viewer 标签：替换 src 里的路径为你们自己的 .glb 模型 -->
+      <model-viewer 
+        src="https://modelviewer.dev/shared-assets/models/Astronaut.glb" 
+        alt="Op-CAD 3D Model Showcase"
+        auto-rotate 
+        camera-controls 
+        shadow-intensity="1" 
+        camera-orbit="45deg 55deg 2.5m"
+        class="w-full h-[420px] rounded-xl bg-gradient-to-b from-slate-100 to-slate-50 focus:outline-none">
+      </model-viewer>
+      
+      <div class="p-4 text-center">
+        <p class="text-sm text-slate-500">
+          <strong class="text-slate-700">Teaser:</strong> Example of an operation-level CAD generation sequence (e.g., Sketch &rarr; Extrude &rarr; Fillet &rarr; Boolean).
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 摘要区域 (Abstract) ================= -->
+  <section id="abstract" class="max-w-3xl mx-auto px-6 mb-20">
+    <h2 class="text-2xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+      <i class="fa-solid fa-align-left text-indigo-600"></i> Abstract
+    </h2>
+    <div class="bg-white p-8 rounded-2xl border border-slate-200/80 shadow-sm text-slate-600 leading-relaxed space-y-4 text-base">
+      <p>
+        Parametric Computer-Aided Design (CAD) is foundational to modern engineering and manufacturing. However, most existing 3D deep learning frameworks focus on boundary representations (B-rep) or point clouds, ignoring the sequential, user-driven **operation-level construction history** that defines authentic CAD modeling.
+      </p>
+      <p>
+        In this work, we introduce <strong class="text-slate-900 font-semibold">Op-CAD</strong>, a large-scale dataset featuring over **128,000 comprehensive operation-level CAD modeling sequences**. Furthermore, we propose a novel reasoning framework that leverages **Chain-of-Operation** prompting and rigorous geometric evaluation metrics (such as edge-aware intersection-over-union) to benchmark boundary accuracy and operational consistency.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= 数据集亮点 (Highlights) ================= -->
+  <section id="highlights" class="max-w-4xl mx-auto px-6 mb-20">
+    <h2 class="text-2xl font-bold text-slate-900 mb-6 text-center">Key Features of Op-CAD</h2>
+    <div class="grid md:grid-cols-3 gap-6">
+      
+      <!-- 卡片 1 -->
+      <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+        <div class="w-12 h-12 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 text-xl mb-4">
+          <i class="fa-solid fa-cubes-stacked"></i>
+        </div>
+        <h3 class="font-bold text-slate-900 text-lg mb-2">128K+ Instances</h3>
+        <p class="text-slate-500 text-sm leading-relaxed">
+          One of the largest repositories of richly annotated parametric models, capturing intricate topological structures and engineering intent.
+        </p>
+      </div>
+
+      <!-- 卡片 2 -->
+      <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+        <div class="w-12 h-12 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 text-xl mb-4">
+          <i class="fa-solid fa-gears"></i>
+        </div>
+        <h3 class="font-bold text-slate-900 text-lg mb-2">Operation-Level</h3>
+        <p class="text-slate-500 text-sm leading-relaxed">
+          Full construction histories including 2D sketches, extrusions, chamfers, fillets, and complex Boolean manipulations.
+        </p>
+      </div>
+
+      <!-- 卡片 3 -->
+      <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+        <div class="w-12 h-12 rounded-lg bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-600 text-xl mb-4">
+          <i class="fa-solid fa-chart-line"></i>
+        </div>
+        <h3 class="font-bold text-slate-900 text-lg mb-2">Precise Evaluation</h3>
+        <p class="text-slate-500 text-sm leading-relaxed">
+          Provides rigorous CAD-specific metrics tailored for edge-sensitive geometry and geometric operation fidelity.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= 引用 / BibTeX 区域 ================= -->
+  <section id="bibtex" class="max-w-3xl mx-auto px-6 mb-24">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-2xl font-bold text-slate-900">BibTeX</h2>
+      <button id="copyBtn" onclick="copyBib()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium text-xs transition-colors">
+        <i class="fa-regular fa-copy"></i> <span>Copy to Clipboard</span>
+      </button>
+    </div>
+    <!-- 替换为你们实际的引用信息 -->
+    <pre id="bibText" class="bg-slate-900 text-slate-300 p-6 rounded-xl text-xs sm:text-sm overflow-x-auto leading-relaxed border border-slate-800 shadow-inner">@article{bai2026opcad,
+  title     = {Op-CAD: A Large-Scale Operation-Level CAD Dataset for 3D Modeling},
+  author    = {Bai, Author and Colleagues, Other},
+  journal   = {arXiv preprint arXiv:2600.00000},
+  year      = {2026}
+}</pre>
+  </section>
+
+  <!-- ================= 页脚 ================= -->
+  <footer class="border-t border-slate-200 py-8 text-center text-xs text-slate-400">
+    <p>Project page template inspired by <a href="https://nerfies.github.io" target="_blank" class="underline hover:text-slate-600">Nerfies</a> and designed with Tailwind CSS.</p>
+  </footer>
+
+  <!-- BibTeX 复制交互脚本 -->
+  <script>
+    function copyBib() {
+      const bibText = document.getElementById('bibText').innerText;
+      const btn = document.getElementById('copyBtn');
+      const span = btn.querySelector('span');
+      
+      navigator.clipboard.writeText(bibText).then(() => {
+        span.innerText = 'Copied!';
+        btn.classList.replace('bg-slate-200', 'bg-emerald-100');
+        btn.classList.replace('text-slate-700', 'text-emerald-700');
+        
+        setTimeout(() => {
+          span.innerText = 'Copy to Clipboard';
+          btn.classList.replace('bg-emerald-100', 'bg-slate-200');
+          btn.classList.replace('text-emerald-700', 'text-slate-700');
+        }, 2000);
+      });
+    }
+  </script>
 </body>
 </html>
