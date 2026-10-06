@@ -4,6 +4,44 @@ Official implementation and evaluation code for the ICML 2026 paper **Op-CAD: Be
 
 Op-CAD is the first large-scale multimodal dataset for operation-oriented CAD generation. It contains 128,449 modeling operations across four operation types and five modalities, together with a geometry-guided annotation pipeline, the CF-IoU evaluation metric, and Chain-of-Operation (COOP) prompting.
 
+<p align="center">
+  <img src="assets/hero.png" width="100%" alt="Op-CAD overview">
+</p>
+
+<p align="center">
+  <a href="https://proceedings.mlr.press/v306/bai26a.html"><strong>Paper</strong></a> ·
+  <a href="https://baiyixue01.github.io/op-cad/"><strong>Project page</strong></a> ·
+  <a href="https://huggingface.co/datasets/Biabai/op-cad"><strong>Dataset</strong></a> ·
+  <a href="https://huggingface.co/Biabai/op-llama-8b"><strong>Model</strong></a>
+</p>
+
+| 128,449 operations | 27K+ CAD models | 4 operation types | 5 modalities |
+|:---:|:---:|:---:|:---:|
+
+## Overview
+
+Op-CAD models CAD construction at two complementary levels: **step-level geometric modeling (SGM)** generates each operation's shape, while **sequence-level spatial modeling (SSM)** places that operation within the complete modeling history.
+
+<p align="center">
+  <img src="assets/task.png" width="100%" alt="Op-CAD task formulation">
+</p>
+
+## Dataset construction
+
+The pipeline parses executable CAD programs, extracts exact geometry and topology, and uses these priors to guide hierarchical VLM annotation at both step and sequence levels.
+
+<p align="center">
+  <img src="assets/pipeline.png" width="100%" alt="Op-CAD parsing and annotation pipeline">
+</p>
+
+## Chain-of-Operation prompting
+
+COOP exposes intermediate shapes and spatial relationships before asking the model to generate the target operation, following an engineer-like modeling process.
+
+<p align="center">
+  <img src="assets/coop.png" width="100%" alt="Chain-of-Operation prompting">
+</p>
+
 This repository contains the evaluation, reward, prompt construction, and inference scripts. Large assets are published separately:
 
 - Paper: https://proceedings.mlr.press/v306/bai26a.html
