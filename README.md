@@ -1,9 +1,12 @@
-# OP-CAD
+# Op-CAD: Benchmarking and Investigating Operation-oriented CAD Generation
 
-OP-CAD is a CAD operation planning and repair benchmark for generating CadQuery code from operation-oriented CAD examples.
+Official implementation and evaluation code for the ICML 2026 paper **Op-CAD: Benchmarking and Investigating Operation-oriented CAD Generation**.
+
+Op-CAD is the first large-scale multimodal dataset for operation-oriented CAD generation. It contains 128,449 modeling operations across four operation types and five modalities, together with a geometry-guided annotation pipeline, the CF-IoU evaluation metric, and Chain-of-Operation (COOP) prompting.
 
 This repository contains the evaluation, reward, prompt construction, and inference scripts. Large assets are published separately:
 
+- Paper: https://proceedings.mlr.press/v306/bai26a.html
 - Project page: https://baiyixue01.github.io/op-cad/
 - Model: https://huggingface.co/Biabai/op-llama-8b
 - Dataset: https://huggingface.co/datasets/Biabai/op-cad
@@ -100,4 +103,18 @@ export OP_CAD_HTTP_API_KEY=...
 
 ## Citation
 
-If you use OP-CAD, cite the project page or paper associated with the release.
+If you use the dataset, model, or evaluation code, please cite:
+
+```bibtex
+@InProceedings{pmlr-v306-bai26a,
+  title     = {Op-{CAD}: Benchmarking and Investigating Operation-oriented {CAD} Generation},
+  author    = {Bai, Yixue and Gu, Yufei and Xie, Zeke},
+  booktitle = {Proceedings of the 43rd International Conference on Machine Learning},
+  pages     = {5245--5264},
+  year      = {2026},
+  volume    = {306},
+  series    = {Proceedings of Machine Learning Research},
+  publisher = {PMLR},
+  url       = {https://proceedings.mlr.press/v306/bai26a.html}
+}
+```
